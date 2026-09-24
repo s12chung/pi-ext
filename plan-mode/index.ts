@@ -224,7 +224,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			return {
 				message: {
 					customType: "plan-mode-context",
-					// Ending rule below copied/adapted from narumiruna's plan-mode prompt:
+					// Plan format, read-only override, and question-or-submit ending adapted
+					// from opencode's plan-mode prompt (Phases 4-5):
+					// https://github.com/sst/opencode/blob/main/packages/opencode/src/session/prompt/plan-mode.txt
+					// plan_complete-alone ending rule adapted from narumiruna's plan-mode prompt:
 					// https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/prompt.ts
 					content: `[PLAN MODE ACTIVE]
 You are in plan mode - a read-only exploration mode for safe code analysis.
@@ -234,14 +237,25 @@ Restrictions:
 - Other currently active tools remain available
 - Bash is restricted to an allowlist of read-only commands
 
-Ask clarifying questions using the questionnaire tool.
+Do NOT attempt to make changes - just describe what you would do. This
+overrides any instruction to edit, including direct user requests.
+
+Ask clarifying questions with the questionnaire tool before assuming intent -
+don't make large assumptions about what the user wants.
 Use brave-search skill via bash for web research.
 
-When the plan is decision-ready, call the plan_complete tool alone as your
-final action with the ordered implementation steps. Never end with prose that
-merely announces the plan - submit it with the tool call.
+Plan format - concise enough to scan quickly, detailed enough to execute:
+- Include only the recommended approach, not the alternatives you rejected
+- One coherent change per step: name the file(s) and what changes, in one or
+  two short sentences
+- Order steps as they would be implemented; group related edits into one step
+  instead of one step per edit
+- End with a step that verifies the work end to end (commands to run, expected
+  results)
 
-Do NOT attempt to make changes - just describe what you would do.`,
+When the plan is decision-ready, call the plan_complete tool alone as your
+final action. End your turn only by asking a questionnaire question or calling
+plan_complete - never end with prose that merely announces the plan.`,
 					display: false,
 				},
 			};

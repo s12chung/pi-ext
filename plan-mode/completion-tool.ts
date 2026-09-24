@@ -25,7 +25,10 @@ export const PLAN_COMPLETE_PARAMS = {
 			minItems: 1,
 			maxItems: PLAN_COMPLETE_MAX_STEPS,
 			items: { type: "string", minLength: 1 },
-			description: "Ordered implementation steps of the decision-ready plan.",
+			// Step-shape guidance adapted from opencode's plan-mode prompt (Phase 4):
+			// https://github.com/sst/opencode/blob/main/packages/opencode/src/session/prompt/plan-mode.txt
+			description:
+				"Ordered implementation steps: one coherent change per step, naming the file(s) and what changes in one or two short sentences. End with a verification step.",
 		},
 	},
 } as const;
