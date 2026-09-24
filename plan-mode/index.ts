@@ -14,9 +14,10 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
-import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, Markdown } from "@earendil-works/pi-tui";
+import { setIdleBorderColor, setPlanBorderColor, tintPlanBorders } from "./border-tint.ts";
 import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils.ts";
 import { restorePlanModeState, type PlanModeState } from "./state.ts";
 import { isCommandContext, startFreshImplementation } from "./fresh-implementation.ts";
@@ -29,12 +30,21 @@ import {
 	type PlanCompletionRenderResult,
 } from "./completion-tool.ts";
 
+type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorComponent"]>[0]>;
+
+// Zen marks its editor factory with a registered symbol for cross-extension ownership checks
+const ZENTUI_EDITOR_OWNER = Symbol.for("pi-zentui.editor-owner");
+
 export default function planModeExtension(pi: ExtensionAPI): void {
 	let planModeEnabled = false;
 	let planSteps: string[] | undefined;
 	let toolsBeforePlanMode: string[] | undefined;
 	// Goes stale on session replacement; cleared in session_start, re-captured by the command handlers
 	let latestCommandContext: ExtensionCommandContext | undefined;
+	let installedEditorFactory: EditorFactory | undefined;
+	// Read at wrap time: once our unmarked factory owns the slot, zen's mark on it is hidden
+	let zenEditorDetected = false;
+	let sessionGeneration = 0;
 
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
@@ -42,12 +52,34 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		default: false,
 	});
 
-	// #FFCF82 has no theme role, so the chip carries its own truecolor escape (dark-theme tuned)
-	const planModeChip = (text: string) => `\x1b[38;2;255;207;130m${text}\x1b[39m`;
+	function isZentuiFactory(factory: EditorFactory | undefined): boolean {
+		return (factory as Record<PropertyKey, unknown> | undefined)?.[ZENTUI_EDITOR_OWNER] !== undefined;
+	}
 
 	function updateStatus(ctx: ExtensionContext): void {
+		// Live theme getter: the role resolves at render time, so theme switches apply
+		setPlanBorderColor((text) => ctx.ui.theme.fg("mdHeading", text));
+		// Wrap (not replace) whatever editor is installed - theme UIs like zentui
+		// render model/thinking in the border and keep working through the
+		// forwarded borderColor; stock pi falls back to a tinted CustomEditor
+		if (ctx.hasUI && ctx.ui.getEditorComponent() !== installedEditorFactory) {
+			const base = ctx.ui.getEditorComponent();
+			zenEditorDetected = isZentuiFactory(base);
+			const factory: EditorFactory = (tui, theme, keybindings) =>
+				tintPlanBorders(
+					base ? base(tui, theme, keybindings) : new CustomEditor(tui, theme, keybindings),
+					() => planModeEnabled,
+				);
+			installedEditorFactory = factory;
+			ctx.ui.setEditorComponent(factory);
+		}
+		// Zen's static border resolves the borderMuted role (zen style.ts
+		// EDITOR_BORDER_FALLBACK), so under adaptive mode the idle border emulates
+		// that instead of pi's thinking-level colors - idle stays zen-gray, planning
+		// turns the same lines orange heavy-weight, all live
+		setIdleBorderColor(zenEditorDetected ? (text) => ctx.ui.theme.fg("borderMuted", text) : undefined);
 		if (planModeEnabled) {
-			ctx.ui.setStatus("plan-mode", planModeChip("⏸ plan"));
+			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("mdHeading", "⏸ plan"));
 		} else {
 			ctx.ui.setStatus("plan-mode", undefined);
 		}
@@ -311,6 +343,7 @@ Do NOT attempt to make changes - just describe what you would do.`,
 	// authoritative so the replaced session's mode/steps cannot leak.
 	pi.on("session_start", async (event, ctx) => {
 		latestCommandContext = undefined;
+		sessionGeneration += 1;
 
 		// Restore persisted state, recovering the plan from the latest
 		// plan_complete toolResult when no state entry was persisted after it
@@ -335,5 +368,16 @@ Do NOT attempt to make changes - just describe what you would do.`,
 			restoreNormalModeTools();
 		}
 		updateStatus(ctx);
+		// Zen installs its editor later in the same startup cascade (its session_start
+		// runs after ours), so the first check above sees an unmarked slot; re-check
+		// shortly after so even the first idle frame gets the emulated border
+		if (ctx.hasUI) {
+			const generation = sessionGeneration;
+			for (const delay of [0, 100, 500, 2000]) {
+				setTimeout(() => {
+					if (generation === sessionGeneration) updateStatus(ctx);
+				}, delay);
+			}
+		}
 	});
 }

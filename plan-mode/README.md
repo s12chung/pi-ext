@@ -16,6 +16,8 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 2. Start pi and enter plan mode with `/plan`, `alt+p`, or launch with `--plan`.
 3. Ask the agent to analyze code and plan a change. While planning:
    - `edit`/`write` are disabled and bash is restricted to a read-only allowlist
+   - the editor border above and below the prompt turns orange, heavy-weight (theme `mdHeading` role); any installed custom editor (e.g. a theme UI) is wrapped, not replaced
+   - with [pi-zentui](https://github.com/lmilojevicc/pi-zentui), set its editor border color mode to **adaptive** (`/zentui` → editor → Editor border color): the frame then follows the dynamic border - zen's usual `borderMuted` gray while idle, orange heavy-weight while planning
    - the agent asks clarifying questions via the `questionnaire` tool
 4. When the plan is decision-ready, the agent calls `plan_complete` with the ordered steps and the turn ends.
 5. Choose what happens next:
