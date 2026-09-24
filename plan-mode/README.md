@@ -28,7 +28,7 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 | Command | Action |
 |---|---|
 | `/plan` | Toggle plan mode |
-| `/todos` | Show the current plan steps |
+| `/todos` | Show the current plan steps or approval picker when a plan is ready |
 | `alt+p` | Toggle plan mode (shortcut) |
 | `--plan` | Start pi in plan mode (initial launch only) |
 

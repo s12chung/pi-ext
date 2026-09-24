@@ -109,6 +109,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 			const list = planSteps.map((text, i) => `${i + 1}. ${text}`).join("\n");
 			ctx.ui.notify(`Plan Steps:\n${list}`, "info");
+			if (!planModeEnabled || !ctx.hasUI) return;
+			// The command handler's ctx has newSession(), so the fresh-session
+			// choice works here even when plan mode was entered via alt+p or --plan.
+			await promptPlanApproval(ctx, ctx);
 		},
 	});
 
@@ -204,13 +208,12 @@ Do NOT attempt to make changes - just describe what you would do.`,
 		}
 	});
 
-	// Handle plan completion and plan mode UI
-	pi.on("agent_end", async (_event, ctx) => {
-		if (!planModeEnabled || !ctx.hasUI) return;
-
-		// Steps arrive via the plan_complete tool call, not prose extraction
+	// Approval picker for a completed plan. Offered with or without a
+	// fresh-session context - like narumiruna's ready menu, only the fresh
+	// handoff is gated, never the choice itself.
+	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (agent_settled latestCommandContext ?? ctx)
+	async function promptPlanApproval(ctx: ExtensionContext, freshContext: ExtensionCommandContext | undefined): Promise<void> {
 		if (!planSteps || planSteps.length === 0) return;
-		persistState();
 
 		// Show plan steps and prompt for next action
 		const todoListText = planSteps.map((text, i) => `${i + 1}. ☐ ${text}`).join("\n");
@@ -220,10 +223,6 @@ Do NOT attempt to make changes - just describe what you would do.`,
 			display: true,
 		};
 
-		// Fresh-session handoff needs a command context - agent_end's ctx has no newSession.
-		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (latestCommandContext)
-		const freshContext =
-			latestCommandContext !== undefined && isCommandContext(latestCommandContext) ? latestCommandContext : undefined;
 		// Choice labels are bound to constants and compared with === against the
 		// same constants, so the "(recommended)" suffix cannot drift from the check.
 		// Source: https://github.com/bacnh85/pi-extensions/blob/main/pi-plan/extensions/index.ts (handlePlanApproval)
@@ -231,15 +230,20 @@ Do NOT attempt to make changes - just describe what you would do.`,
 		const currentChoice = "Execute in current session";
 		const stayChoice = "Stay in plan mode";
 		const refineChoice = "Refine the plan";
-		const choice = await ctx.ui.select("Plan mode - what next?", [
-			...(freshContext ? [freshChoice] : []),
-			currentChoice,
-			stayChoice,
-			refineChoice,
-		]);
+		const choice = await ctx.ui.select("Plan mode - what next?", [freshChoice, currentChoice, stayChoice, refineChoice]);
 		if (!choice || choice === stayChoice) return;
 
-		if (choice === freshChoice && freshContext && planSteps) {
+		if (choice === freshChoice) {
+			// No command context means no newSession() - bail to the interactive
+			// command instead of hiding the choice.
+			// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationFromState isCommandContext bail)
+			if (!freshContext) {
+				ctx.ui.notify(
+					"Fresh implementation requires the interactive /todos command. Run /todos and try again.",
+					"warning",
+				);
+				return;
+			}
 			const steps = planSteps;
 			persistState();
 			// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationSession)
@@ -277,6 +281,21 @@ Do NOT attempt to make changes - just describe what you would do.`,
 				pi.sendUserMessage(refinement.trim(), { deliverAs: "followUp" });
 			}
 		}
+	}
+
+	// Handle plan completion and plan mode UI
+	pi.on("agent_end", async (_event, ctx) => {
+		if (!planModeEnabled || !ctx.hasUI) return;
+
+		// Steps arrive via the plan_complete tool call, not prose extraction
+		if (!planSteps || planSteps.length === 0) return;
+		persistState();
+
+		// Fresh-session handoff needs a command context - agent_end's ctx has no newSession.
+		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (latestCommandContext)
+		const freshContext =
+			latestCommandContext !== undefined && isCommandContext(latestCommandContext) ? latestCommandContext : undefined;
+		await promptPlanApproval(ctx, freshContext);
 	});
 
 	// Restore state on session start/resume from session memory (appendEntry).
