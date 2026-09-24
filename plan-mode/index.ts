@@ -5,7 +5,7 @@
  * When enabled, built-in write tools are disabled.
  *
  * Features:
- * - /plan command or Ctrl+Alt+P to toggle
+ * - /plan command or alt+p to toggle
  * - Bash restricted to allowlisted read-only commands
  * - Plan submitted via a structured plan_complete tool call (no prose parsing)
  * - Plan stored in session memory (appendEntry) - no files, no drift
@@ -44,9 +44,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		default: false,
 	});
 
+	// #FFCF82 has no theme role, so the chip carries its own truecolor escape (dark-theme tuned)
+	const planModeChip = (text: string) => `\x1b[38;2;255;207;130m${text}\x1b[39m`;
+
 	function updateStatus(ctx: ExtensionContext): void {
 		if (planModeEnabled) {
-			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("warning", "⏸ plan"));
+			ctx.ui.setStatus("plan-mode", planModeChip("⏸ plan"));
 		} else {
 			ctx.ui.setStatus("plan-mode", undefined);
 		}
@@ -128,7 +131,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut(Key.ctrlAlt("p"), {
+	pi.registerShortcut(Key.alt("p"), {
 		description: "Toggle plan mode",
 		handler: async (ctx) => togglePlanMode(ctx),
 	});

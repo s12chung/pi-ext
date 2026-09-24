@@ -13,7 +13,7 @@ mkdir -p ~/.pi/extensions
 ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 ```
 
-2. Start pi and enter plan mode with `/plan`, `Ctrl+Alt+P`, or launch with `--plan`.
+2. Start pi and enter plan mode with `/plan`, `alt+p`, or launch with `--plan`.
 3. Ask the agent to analyze code and plan a change. While planning:
    - `edit`/`write` are disabled and bash is restricted to a read-only allowlist
    - the agent asks clarifying questions via the `questionnaire` tool
@@ -29,7 +29,7 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 |---|---|
 | `/plan` | Toggle plan mode |
 | `/todos` | Show the current plan steps |
-| `Ctrl+Alt+P` | Toggle plan mode (shortcut) |
+| `alt+p` | Toggle plan mode (shortcut) |
 | `--plan` | Start pi in plan mode (initial launch only) |
 
 ## Persistence and recovery
