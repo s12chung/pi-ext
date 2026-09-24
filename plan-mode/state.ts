@@ -5,11 +5,12 @@
 
 import { PLAN_COMPLETE_TOOL_NAME, stepsFromCompletionDetails } from "./completion-tool.ts";
 
-// Source (adapted: latestPlan/plan string → planSteps/steps array):
+// Source (adapted: latestPlan/activeImplementation plan strings → planSteps/activeSteps step arrays):
 // https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/state.ts
 export interface PlanModeState {
 	enabled: boolean;
 	planSteps?: string[];
+	activeSteps?: string[];
 	toolsBeforePlanMode?: string[];
 }
 
@@ -40,9 +41,14 @@ export function restorePlanModeState(entries: unknown[]): PlanModeState {
 	const enabled = entry.data.enabled === true;
 	const persistedSteps = enabled ? stringArray(entry.data.planSteps) : undefined;
 	const recoveredSteps = enabled && !persistedSteps ? latestCompletionSteps(branch.slice(stateEntryIndex + 1)) : undefined;
+	// Handoff entries carry steps with plan mode disabled; read them only then,
+	// like activeImplementation in the source.
+	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/state.ts (restorePlanModeState activeImplementation)
+	const activeSteps = enabled ? undefined : stringArray(entry.data.activeSteps);
 	return {
 		enabled,
 		planSteps: persistedSteps ?? recoveredSteps,
+		activeSteps,
 		toolsBeforePlanMode: stringArray(entry.data.toolsBeforePlanMode),
 	};
 }

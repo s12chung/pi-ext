@@ -13,10 +13,11 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
 import { isSafeCommand } from "./utils.ts";
 import { restorePlanModeState, type PlanModeState } from "./state.ts";
+import { isCommandContext, startFreshImplementation } from "./fresh-implementation.ts";
 import {
 	normalizePlanCompletion,
 	planCompleted,
@@ -34,6 +35,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let planModeEnabled = false;
 	let planSteps: string[] | undefined;
 	let toolsBeforePlanMode: string[] | undefined;
+	// Goes stale on session replacement; cleared in session_start, re-captured by the command handlers
+	let latestCommandContext: ExtensionCommandContext | undefined;
 
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
@@ -82,7 +85,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	function persistState(): void {
 		pi.appendEntry("plan-mode", {
 			enabled: planModeEnabled,
-			planSteps,
+			// latestPlan while planning; activeSteps once handed off for execution
+			planSteps: planModeEnabled ? planSteps : undefined,
+			activeSteps: planModeEnabled ? undefined : planSteps,
 			toolsBeforePlanMode,
 		} satisfies PlanModeState);
 	}
@@ -104,12 +109,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("plan", {
 		description: "Toggle plan mode (read-only exploration)",
-		handler: async (_args, ctx) => togglePlanMode(ctx),
+		handler: async (_args, ctx) => {
+			latestCommandContext = ctx;
+			togglePlanMode(ctx);
+		},
 	});
 
 	pi.registerCommand("todos", {
 		description: "Show the current plan steps",
 		handler: async (_args, ctx) => {
+			latestCommandContext = ctx;
 			if (!planSteps || planSteps.length === 0) {
 				ctx.ui.notify("No plan steps. Create a plan first with /plan", "info");
 				return;
@@ -226,13 +235,41 @@ Do NOT attempt to make changes - just describe what you would do.`,
 			display: true,
 		};
 
+		// Fresh-session handoff needs a command context - agent_end's ctx has no newSession.
+		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (latestCommandContext)
+		const freshContext =
+			latestCommandContext !== undefined && isCommandContext(latestCommandContext) ? latestCommandContext : undefined;
+		// Choice labels are bound to constants and compared with === against the
+		// same constants, so the "(recommended)" suffix cannot drift from the check.
+		// Source: https://github.com/bacnh85/pi-extensions/blob/main/pi-plan/extensions/index.ts (handlePlanApproval)
+		const freshChoice = "Execute in fresh session (recommended)";
+		const currentChoice = "Execute in current session";
+		const stayChoice = "Stay in plan mode";
+		const refineChoice = "Refine the plan";
 		const choice = await ctx.ui.select("Plan mode - what next?", [
-			"Execute the plan",
-			"Stay in plan mode",
-			"Refine the plan",
+			...(freshContext ? [freshChoice] : []),
+			currentChoice,
+			stayChoice,
+			refineChoice,
 		]);
+		if (!choice || choice === stayChoice) return;
 
-		if (choice?.startsWith("Execute")) {
+		if (choice === freshChoice && freshContext && planSteps) {
+			const steps = planSteps;
+			persistState();
+			// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationSession)
+			await startFreshImplementation(freshContext, {
+				steps,
+				activate: (ctx) => {
+					planModeEnabled = false;
+					planSteps = steps;
+					if (toolsBeforePlanMode !== undefined) {
+						restoreNormalModeTools();
+					}
+					updateStatus(ctx);
+				},
+			});
+		} else if (choice === currentChoice) {
 			if (!planSteps || planSteps.length === 0) return;
 
 			planModeEnabled = false;
@@ -248,7 +285,7 @@ Do NOT attempt to make changes - just describe what you would do.`,
 				{ customType: "plan-mode-execute", content: execMessage, display: true },
 				{ triggerTurn: true, deliverAs: "followUp" },
 			);
-		} else if (choice === "Refine the plan") {
+		} else if (choice === refineChoice) {
 			const refinement = await ctx.ui.editor("Refine the plan:", "");
 			if (refinement?.trim()) {
 				pi.sendMessage(planTodoListMessage, { deliverAs: "followUp" });
@@ -257,22 +294,30 @@ Do NOT attempt to make changes - just describe what you would do.`,
 		}
 	});
 
-	// Restore state on session start/resume from session memory (appendEntry)
-	pi.on("session_start", async (_event, ctx) => {
-		if (pi.getFlag("plan") === true) {
-			planModeEnabled = true;
-		}
+	// Restore state on session start/resume from session memory (appendEntry).
+	// Runs on session replacement too (newSession/fork/switch): saved state is
+	// authoritative so the replaced session's mode/steps cannot leak.
+	pi.on("session_start", async (event, ctx) => {
+		latestCommandContext = undefined;
 
 		// Restore persisted state, recovering the plan from the latest
 		// plan_complete toolResult when no state entry was persisted after it
 		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/state.ts (restorePlanModeState)
 		const saved = restorePlanModeState(ctx.sessionManager.getEntries());
-		planModeEnabled = saved.enabled || planModeEnabled;
-		planSteps = saved.planSteps ?? planSteps;
-		toolsBeforePlanMode = saved.toolsBeforePlanMode ?? toolsBeforePlanMode;
+		planModeEnabled = saved.enabled;
+		// --plan applies only to the initial launch - never to mid-session
+		// replacements (manual /new, fresh-session handoff)
+		// Source: https://github.com/bacnh85/pi-extensions/blob/main/pi-plan/extensions/index.ts (session_start --plan gating)
+		if (event.reason === "startup" && pi.getFlag("plan") === true) {
+			planModeEnabled = true;
+		}
+		planSteps = saved.planSteps ?? saved.activeSteps;
+		toolsBeforePlanMode = saved.toolsBeforePlanMode;
 
 		if (planModeEnabled) {
 			enablePlanModeTools();
+		} else if (toolsBeforePlanMode !== undefined) {
+			restoreNormalModeTools();
 		}
 		updateStatus(ctx);
 	});
