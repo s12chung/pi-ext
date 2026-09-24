@@ -7,7 +7,7 @@
  * Features:
  * - /plan command or Ctrl+Alt+P to toggle
  * - Bash restricted to allowlisted read-only commands
- * - Extracts numbered plan steps from "Plan:" sections
+ * - Plan submitted via a structured plan_complete tool call (no prose parsing)
  * - [DONE:n] markers to complete steps during execution
  * - Progress tracking widget during execution
  */
@@ -16,10 +16,16 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
-import { extractTodoItems, isSafeCommand, markCompletedSteps, type TodoItem } from "./utils.ts";
+import { isSafeCommand, markCompletedSteps, type TodoItem } from "./utils.ts";
+import {
+	normalizePlanCompletion,
+	planCompleted,
+	PLAN_COMPLETE_PARAMS,
+	PLAN_COMPLETE_TOOL_NAME,
+} from "./completion-tool.ts";
 
 // Tools
-const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire"];
+const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", PLAN_COMPLETE_TOOL_NAME];
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"];
 const PLAN_MODE_DISABLED_TOOLS = new Set<string>(["edit", "write"]);
 const PLAN_MANAGED_TOOLS = new Set<string>([...PLAN_MODE_TOOLS, ...NORMAL_MODE_TOOLS]);
@@ -160,6 +166,25 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		handler: async (ctx) => togglePlanMode(ctx),
 	});
 
+	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (registerTool: plan_mode_complete)
+	pi.registerTool({
+		name: PLAN_COMPLETE_TOOL_NAME,
+		label: "Complete plan",
+		description:
+			"Submit the decision-ready plan while plan mode is active, and call it alone as the final action. Never call it for ordinary planning requests.",
+		parameters: PLAN_COMPLETE_PARAMS,
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			if (!planModeEnabled) {
+				throw new Error("plan_complete is only available while plan mode is active");
+			}
+			const parsed = normalizePlanCompletion(params);
+			if (!parsed.ok) throw new Error(parsed.error);
+
+			todoItems = parsed.steps.map((text, i) => ({ step: i + 1, text, completed: false }));
+			return planCompleted(parsed.steps);
+		},
+	});
+
 	// Block destructive bash commands in plan mode
 	pi.on("tool_call", async (event) => {
 		if (!planModeEnabled || event.toolName !== "bash") return;
@@ -203,6 +228,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			return {
 				message: {
 					customType: "plan-mode-context",
+					// Ending rule below copied/adapted from narumiruna's plan-mode prompt:
+					// https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/prompt.ts
 					content: `[PLAN MODE ACTIVE]
 You are in plan mode - a read-only exploration mode for safe code analysis.
 
@@ -214,12 +241,9 @@ Restrictions:
 Ask clarifying questions using the questionnaire tool.
 Use brave-search skill via bash for web research.
 
-Create a detailed numbered plan under a "Plan:" header:
-
-Plan:
-1. First step description
-2. Second step description
-...
+When the plan is decision-ready, call the plan_complete tool alone as your
+final action with the ordered implementation steps. Never end with prose that
+merely announces the plan - submit it with the tool call.
 
 Do NOT attempt to make changes - just describe what you would do.`,
 					display: false,
@@ -278,15 +302,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 
 		if (!planModeEnabled || !ctx.hasUI) return;
 
-		// Extract todos from last assistant message
-		const lastAssistant = [...event.messages].reverse().find(isAssistantMessage);
-		if (lastAssistant) {
-			const extracted = extractTodoItems(getTextContent(lastAssistant));
-			if (extracted.length > 0) {
-				todoItems = extracted;
-			}
-		}
-
+		// Steps arrive via the plan_complete tool call, not prose extraction
 		if (todoItems.length === 0) return;
 		persistState();
 
