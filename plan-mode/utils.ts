@@ -1,6 +1,5 @@
 /**
- * Pure utility functions for plan mode.
- * Extracted for testability.
+ * Bash command policy for plan mode.
  */
 
 // Destructive commands blocked in plan mode
@@ -98,28 +97,4 @@ export function isSafeCommand(command: string): boolean {
 	const isDestructive = DESTRUCTIVE_PATTERNS.some((p) => p.test(command));
 	const isSafe = SAFE_PATTERNS.some((p) => p.test(command));
 	return !isDestructive && isSafe;
-}
-
-export interface TodoItem {
-	step: number;
-	text: string;
-	completed: boolean;
-}
-
-export function extractDoneSteps(message: string): number[] {
-	const steps: number[] = [];
-	for (const match of message.matchAll(/\[DONE:(\d+)\]/gi)) {
-		const step = Number(match[1]);
-		if (Number.isFinite(step)) steps.push(step);
-	}
-	return steps;
-}
-
-export function markCompletedSteps(text: string, items: TodoItem[]): number {
-	const doneSteps = extractDoneSteps(text);
-	for (const step of doneSteps) {
-		const item = items.find((t) => t.step === step);
-		if (item) item.completed = true;
-	}
-	return doneSteps.length;
 }
