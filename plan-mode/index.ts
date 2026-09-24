@@ -7,6 +7,7 @@
  * Features:
  * - /plan command or alt+p to toggle
  * - Bash restricted to allowlisted read-only commands
+ * - Plan-only tools (questionnaire, plan_complete) active only while planning
  * - Plan submitted via a structured plan_complete tool call (no prose parsing)
  * - Plan stored in session memory (appendEntry) - no files, no drift
  */
@@ -15,7 +16,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
-import { unsafeCommandReason } from "./utils.ts";
+import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils.ts";
 import { restorePlanModeState, type PlanModeState } from "./state.ts";
 import { isCommandContext, startFreshImplementation } from "./fresh-implementation.ts";
 import {
@@ -24,12 +25,6 @@ import {
 	PLAN_COMPLETE_PARAMS,
 	PLAN_COMPLETE_TOOL_NAME,
 } from "./completion-tool.ts";
-
-// Tools
-const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", PLAN_COMPLETE_TOOL_NAME];
-const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"];
-const PLAN_MODE_DISABLED_TOOLS = new Set<string>(["edit", "write"]);
-const PLAN_MANAGED_TOOLS = new Set<string>([...PLAN_MODE_TOOLS, ...NORMAL_MODE_TOOLS]);
 
 export default function planModeExtension(pi: ExtensionAPI): void {
 	let planModeEnabled = false;
@@ -55,24 +50,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	function uniqueToolNames(toolNames: string[]): string[] {
-		return [...new Set(toolNames)];
-	}
-
-	function getPlanModeTools(activeToolNames: string[]): string[] {
-		return uniqueToolNames([
-			...activeToolNames.filter((name) => !PLAN_MODE_DISABLED_TOOLS.has(name)),
-			...PLAN_MODE_TOOLS,
-		]);
-	}
-
-	function getNormalModeTools(activeToolNames: string[]): string[] {
-		return uniqueToolNames([
-			...NORMAL_MODE_TOOLS,
-			...activeToolNames.filter((name) => !PLAN_MANAGED_TOOLS.has(name)),
-		]);
-	}
-
+	// Source: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/plan-mode/index.ts
+	// (enablePlanModeTools/restoreNormalModeTools)
 	function enablePlanModeTools(): void {
 		if (toolsBeforePlanMode === undefined) {
 			toolsBeforePlanMode = pi.getActiveTools();
@@ -81,7 +60,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	function restoreNormalModeTools(): void {
-		pi.setActiveTools(toolsBeforePlanMode ?? getNormalModeTools(pi.getActiveTools()));
+		// pi auto-activates newly registered tools, so plan-only helpers can pollute
+		// both the pre-plan snapshot and the live set; derive rather than restore.
+		pi.setActiveTools(getNormalModeTools(toolsBeforePlanMode ?? pi.getActiveTools()));
 		toolsBeforePlanMode = undefined;
 	}
 
@@ -320,7 +301,10 @@ Do NOT attempt to make changes - just describe what you would do.`,
 
 		if (planModeEnabled) {
 			enablePlanModeTools();
-		} else if (toolsBeforePlanMode !== undefined) {
+		} else {
+			// Also covers fresh sessions, where the helpers start out auto-active.
+			// narumiruna hides the helpers at session start until the first plan activation.
+			// Source: https://github.com/narumiruna/pi-extensions/blob/e74ee843d8ad1a6ef1932922a7d8dad335b24baa/packages/pi-plan-mode/src/helper-tool-visibility.ts (reconcileInactiveState/hideIfLocked)
 			restoreNormalModeTools();
 		}
 		updateStatus(ctx);
