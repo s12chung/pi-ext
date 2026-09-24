@@ -93,8 +93,10 @@ const SAFE_PATTERNS = [
 	/^\s*eza\b/,
 ];
 
-export function isSafeCommand(command: string): boolean {
-	const isDestructive = DESTRUCTIVE_PATTERNS.some((p) => p.test(command));
-	const isSafe = SAFE_PATTERNS.some((p) => p.test(command));
-	return !isDestructive && isSafe;
+// First matching destructive pattern, or the absence of a safe match, formats into the block reason
+export function unsafeCommandReason(command: string): string | undefined {
+	const destructive = DESTRUCTIVE_PATTERNS.find((p) => p.test(command));
+	if (destructive) return `destructive pattern /${destructive.source}/${destructive.flags}`;
+	if (!SAFE_PATTERNS.some((p) => p.test(command))) return "no safe allowlist pattern matched";
+	return undefined;
 }

@@ -15,7 +15,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
-import { isSafeCommand } from "./utils.ts";
+import { unsafeCommandReason } from "./utils.ts";
 import { restorePlanModeState, type PlanModeState } from "./state.ts";
 import { isCommandContext, startFreshImplementation } from "./fresh-implementation.ts";
 import {
@@ -160,10 +160,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		if (!planModeEnabled || event.toolName !== "bash") return;
 
 		const command = event.input.command as string;
-		if (!isSafeCommand(command)) {
+		const unsafeReason = unsafeCommandReason(command);
+		if (unsafeReason) {
 			return {
 				block: true,
-				reason: `Plan mode: command blocked (not allowlisted). Use /plan to disable plan mode first.\nCommand: ${command}`,
+				reason: `Plan mode: command blocked (${unsafeReason}). Use /plan to disable plan mode first.\nCommand: ${command}`,
 			};
 		}
 	});
