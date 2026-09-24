@@ -1,0 +1,43 @@
+# Plan Mode Extension for pi
+
+Read-only exploration mode for [pi](https://github.com/earendil-works/pi): the agent analyzes code and produces a decision-ready plan before any files change. Plans are submitted through a structured `plan_complete` tool call and live in session memory — never in files.
+
+Started from pi's bundled `examples/extensions/plan-mode`, with the structured completion tool and state recovery adapted from [narumiruna/pi-extensions](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-plan-mode) and the fresh-session handoff from [bacnh85/pi-extensions](https://github.com/bacnh85/pi-extensions/tree/main/pi-plan). Per-change sources are cited in code comments.
+
+## Quickstart
+
+1. Install into your user extensions directory (or `<project>/.pi/extensions/` for project-only), from this directory:
+
+```sh
+mkdir -p ~/.pi/extensions
+ln -s "$(pwd)" ~/.pi/extensions/plan-mode
+```
+
+2. Start pi and enter plan mode with `/plan`, `Ctrl+Alt+P`, or launch with `--plan`.
+3. Ask the agent to analyze code and plan a change. While planning:
+   - `edit`/`write` are disabled and bash is restricted to a read-only allowlist
+   - the agent asks clarifying questions via the `questionnaire` tool
+4. When the plan is decision-ready, the agent calls `plan_complete` with the ordered steps and the turn ends.
+5. Choose what happens next:
+   - **Execute in fresh session (recommended)** — starts a new session whose kickoff prompt embeds the plan; the planning transcript stays behind in the parent session
+   - **Execute in current session** — restores full tool access and runs the plan in place
+   - **Stay in plan mode** / **Refine the plan** — keep iterating
+
+## Commands
+
+| Command | Action |
+|---|---|
+| `/plan` | Toggle plan mode |
+| `/todos` | Show the current plan steps |
+| `Ctrl+Alt+P` | Toggle plan mode (shortcut) |
+| `--plan` | Start pi in plan mode (initial launch only) |
+
+## Persistence and recovery
+
+State is appended to the session file via `appendEntry("plan-mode", ...)`. On resume, the latest entry restores the mode, steps, and prior tool set. If pi crashes between a `plan_complete` call and the next state append, the steps are recovered from that tool result's details.
+
+## Tests
+
+```sh
+node --test *.test.ts
+```
