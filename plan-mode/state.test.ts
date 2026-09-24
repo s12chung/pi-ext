@@ -13,6 +13,8 @@ const planCompleteResult = (details: unknown) => ({
 });
 const assistantEntry = { type: "message", message: { role: "assistant", content: [] } };
 
+const PLAN = "## 1. Core\nSwap the field.\n\n## 2. Verification\nmake test.";
+
 const NO_STATE = { enabled: false };
 
 test("returns disabled when no state entry exists", () => {
@@ -22,60 +24,74 @@ test("returns disabled when no state entry exists", () => {
 
 test("restores an enabled planning state", () => {
 	assert.deepEqual(
-		restorePlanModeState(stateEntry({ enabled: true, planSteps: ["x"], toolsBeforePlanMode: ["read"] })),
-		{ enabled: true, planSteps: ["x"], activeSteps: undefined, toolsBeforePlanMode: ["read"] },
+		restorePlanModeState(stateEntry({ enabled: true, plan: PLAN, toolsBeforePlanMode: ["read"] })),
+		{ enabled: true, plan: PLAN, activePlan: undefined, toolsBeforePlanMode: ["read"] },
 	);
 });
 
 test("restores a handoff state with plan mode disabled", () => {
-	assert.deepEqual(restorePlanModeState(stateEntry({ enabled: false, activeSteps: ["y"] })), {
+	assert.deepEqual(restorePlanModeState(stateEntry({ enabled: false, activePlan: PLAN })), {
 		enabled: false,
-		planSteps: undefined,
-		activeSteps: ["y"],
+		plan: undefined,
+		activePlan: PLAN,
 		toolsBeforePlanMode: undefined,
 	});
 });
 
-test("recovers steps from a plan_complete toolResult after the state entry", () => {
+test("recovers the plan from a plan_complete toolResult after the state entry", () => {
 	assert.deepEqual(
-		restorePlanModeState(stateEntry({ enabled: true }, planCompleteResult({ version: 1, source: "plan_complete", steps: ["r1"] }))),
-		{ enabled: true, planSteps: ["r1"], activeSteps: undefined, toolsBeforePlanMode: undefined },
+		restorePlanModeState(
+			stateEntry({ enabled: true }, planCompleteResult({ version: 1, source: "plan_complete", plan: PLAN })),
+		),
+		{ enabled: true, plan: PLAN, activePlan: undefined, toolsBeforePlanMode: undefined },
 	);
 });
 
 test("ignores plan_complete toolResults before the state entry", () => {
 	assert.deepEqual(
-		restorePlanModeState([planCompleteResult({ version: 1, source: "plan_complete", steps: ["old"] }), ...stateEntry({ enabled: true })]),
-		{ enabled: true, planSteps: undefined, activeSteps: undefined, toolsBeforePlanMode: undefined },
+		restorePlanModeState([
+			planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. Old" }),
+			...stateEntry({ enabled: true }),
+		]),
+		{ enabled: true, plan: undefined, activePlan: undefined, toolsBeforePlanMode: undefined },
 	);
 });
 
 test("newest plan_complete toolResult wins", () => {
 	const entries = stateEntry(
 		{ enabled: true },
-		planCompleteResult({ version: 1, source: "plan_complete", steps: ["first"] }),
+		planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. First" }),
 		assistantEntry,
-		planCompleteResult({ version: 1, source: "plan_complete", steps: ["second"] }),
+		planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. Second" }),
 	);
-	assert.deepEqual(restorePlanModeState(entries).planSteps, ["second"]);
+	assert.deepEqual(restorePlanModeState(entries).plan, "## 1. Second");
 });
 
-test("invalid persisted steps fall back to toolResult recovery", () => {
+test("invalid persisted plan falls back to toolResult recovery", () => {
 	const entries = stateEntry(
-		{ enabled: true, planSteps: ["a", ""] },
-		planCompleteResult({ version: 1, source: "plan_complete", steps: ["rec"] }),
+		{ enabled: true, plan: "  " },
+		planCompleteResult({ version: 1, source: "plan_complete", plan: PLAN }),
 	);
-	assert.deepEqual(restorePlanModeState(entries).planSteps, ["rec"]);
+	assert.deepEqual(restorePlanModeState(entries).plan, PLAN);
 });
 
-test("disabled state ignores persisted planSteps", () => {
-	assert.equal(restorePlanModeState(stateEntry({ enabled: false, planSteps: ["stale"] })).planSteps, undefined);
+test("persisted plan without phase headings is ignored", () => {
+	assert.deepEqual(restorePlanModeState(stateEntry({ enabled: true, plan: "just prose" })), {
+		enabled: true,
+		plan: undefined,
+		activePlan: undefined,
+		toolsBeforePlanMode: undefined,
+	});
+});
+
+test("disabled state ignores persisted plan", () => {
+	assert.equal(restorePlanModeState(stateEntry({ enabled: false, plan: "## 1. Stale" })).plan, undefined);
 });
 
 test("ignores toolResults from other tools", () => {
 	const bashResult = {
 		type: "message",
-		message: { role: "toolResult", toolName: "bash", details: { version: 1, source: "plan_complete", steps: ["nope"] } },
+		message: { role: "toolResult", toolName: "bash", details: { version: 1, source: "plan_complete", plan: PLAN } },
 	};
-	assert.equal(restorePlanModeState(stateEntry({ enabled: true }, bashResult)).planSteps, undefined);
+	assert.equal(restorePlanModeState(stateEntry({ enabled: true }, bashResult)).plan, undefined);
 });

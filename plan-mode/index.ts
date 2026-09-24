@@ -8,7 +8,8 @@
  * - /plan command or alt+p to toggle
  * - Bash restricted to allowlisted read-only commands
  * - Plan-only tools (questionnaire, plan_complete) active only while planning
- * - Plan submitted via a structured plan_complete tool call (no prose parsing)
+ * - Plan submitted via plan_complete as free-flow markdown (format-validated;
+ *   heading titles become the phase checklist)
  * - Plan stored in session memory (appendEntry) - no files, no drift
  */
 
@@ -19,10 +20,12 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { Key, Markdown } from "@earendil-works/pi-tui";
 import { setIdleBorderColor, setPlanBorderColor, tintPlanBorders } from "./border-tint.ts";
 import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils.ts";
+import questionnaire from "./questionnaire.ts";
 import { restorePlanModeState, type PlanModeState } from "./state.ts";
 import { isCommandContext, startFreshImplementation } from "./fresh-implementation.ts";
 import {
 	normalizePlanCompletion,
+	phaseTitles,
 	planCompleted,
 	planCompletionMarkdown,
 	PLAN_COMPLETE_PARAMS,
@@ -36,8 +39,12 @@ type EditorFactory = NonNullable<Parameters<ExtensionContext["ui"]["setEditorCom
 const ZENTUI_EDITOR_OWNER = Symbol.for("pi-zentui.editor-owner");
 
 export default function planModeExtension(pi: ExtensionAPI): void {
+	// Registers the questionnaire tool; visibility is toggled by the
+	// required-helpers block in utils.ts (plan-mode only)
+	questionnaire(pi);
+
 	let planModeEnabled = false;
-	let planSteps: string[] | undefined;
+	let plan: string | undefined;
 	let toolsBeforePlanMode: string[] | undefined;
 	// Goes stale on session replacement; cleared in session_start, re-captured by the command handlers
 	let latestCommandContext: ExtensionCommandContext | undefined;
@@ -104,16 +111,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	function persistState(): void {
 		pi.appendEntry("plan-mode", {
 			enabled: planModeEnabled,
-			// latestPlan while planning; activeSteps once handed off for execution
-			planSteps: planModeEnabled ? planSteps : undefined,
-			activeSteps: planModeEnabled ? undefined : planSteps,
+			// plan markdown while planning; activePlan once handed off for execution
+			plan: planModeEnabled ? plan : undefined,
+			activePlan: planModeEnabled ? undefined : plan,
 			toolsBeforePlanMode,
 		} satisfies PlanModeState);
 	}
 
 	function togglePlanMode(ctx: ExtensionContext): void {
 		planModeEnabled = !planModeEnabled;
-		planSteps = undefined;
+		plan = undefined;
 
 		if (planModeEnabled) {
 			enablePlanModeTools();
@@ -135,15 +142,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("todos", {
-		description: "Show the current plan steps",
+		description: "Show the current plan phases",
 		handler: async (_args, ctx) => {
 			latestCommandContext = ctx;
-			if (!planSteps || planSteps.length === 0) {
-				ctx.ui.notify("No plan steps. Create a plan first with /plan", "info");
+			if (!plan) {
+				ctx.ui.notify("No plan phases. Create a plan first with /plan", "info");
 				return;
 			}
-			const list = planSteps.map((text, i) => `${i + 1}. ${text}`).join("\n");
-			ctx.ui.notify(`Plan Steps:\n${list}`, "info");
+			const list = phaseTitles(plan).map((title, i) => `${i + 1}. ${title}`).join("\n");
+			ctx.ui.notify(`Plan Phases:\n${list}`, "info");
 			if (!planModeEnabled || !ctx.hasUI) return;
 			// The command handler's ctx has newSession(), so the fresh-session
 			// choice works here even when plan mode was entered via alt+p or --plan.
@@ -165,7 +172,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		name: PLAN_COMPLETE_TOOL_NAME,
 		label: "Complete plan",
 		description:
-			"Submit the decision-ready plan while plan mode is active, and call it alone as the final action. Never call it for ordinary planning requests.",
+			"Use this tool when you have completed the planning phase and are ready to submit the plan. Call this tool: after you have written a complete plan, after you have clarified any questions with the user, when you are confident the plan is ready for implementation. Do NOT call this tool: before you have finalized the plan, if you still have unanswered questions about the implementation, if the user has indicated that they want to continue planning.",
 		parameters: PLAN_COMPLETE_PARAMS,
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			if (!planModeEnabled) {
@@ -174,8 +181,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const parsed = normalizePlanCompletion(params);
 			if (!parsed.ok) throw new Error(parsed.error);
 
-			planSteps = parsed.steps;
-			return planCompleted(parsed.steps);
+			plan = parsed.plan;
+			return planCompleted(parsed.plan);
 		},
 		renderResult: renderPlanCompletion,
 	});
@@ -224,38 +231,50 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			return {
 				message: {
 					customType: "plan-mode-context",
-					// Plan format, read-only override, and question-or-submit ending adapted
-					// from opencode's plan-mode prompt (Phases 4-5):
+					// Initial understanding, plan format, read-only override, and
+					// question-or-submit ending adapted from opencode's plan-mode prompt
+					// (Phases 1, 4-5), its plan.txt (tradeoffs questioning, read-only
+					// override), and its tool/plan-exit.txt (tool gating). Explore subagents
+					// adapted to read-only pi child processes spawned via bash (the one
+					// allowlisted pi command):
 					// https://github.com/sst/opencode/blob/main/packages/opencode/src/session/prompt/plan-mode.txt
-					// plan_complete-alone ending rule adapted from narumiruna's plan-mode prompt:
-					// https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/prompt.ts
 					content: `[PLAN MODE ACTIVE]
-You are in plan mode - a read-only exploration mode for safe code analysis.
+The user indicated that they do not want you to execute yet -- you MUST NOT
+make any edits, run any non-readonly tools (including changing configs or
+making commits), or otherwise make any changes to the system. This supersedes
+any other instructions you have received.
 
 Restrictions:
 - Built-in edit and write tools are disabled
 - Other currently active tools remain available
 - Bash is restricted to an allowlist of read-only commands
 
-Do NOT attempt to make changes - just describe what you would do. This
-overrides any instruction to edit, including direct user requests.
+1. Focus on understanding the user's request and the code associated with their request
+2. For uncertain scope, launch up to 3 read-only explore children in parallel,
+   one bash call each in a single message, exactly this command with your
+   focus quoted:
+   pi --print --no-extensions --no-session --tools read,grep,find,ls "<focus> - report findings"
+   Quality over quantity - use the fewest children that cover the scope
+3. Use the questionnaire tool to clarify ambiguities in the user request up
+   front, and ask for their opinion when weighing tradeoffs - don't make
+   large assumptions about user intent
 
-Ask clarifying questions with the questionnaire tool before assuming intent -
-don't make large assumptions about what the user wants.
-Use brave-search skill via bash for web research.
+Plan format - free-flow markdown, concise enough to scan quickly, but
+detailed enough to execute effectively:
+- Include only your recommended approach, not all alternatives
+- Break the work into a few phases, each opened by a numbered markdown
+  heading ("## 1. Short title", numbered sequentially from 1) followed by
+  its description
+- Include the paths of critical files to be modified
+- End with a verification phase describing how to test the changes
+  end-to-end (run the code, run tests)
 
-Plan format - concise enough to scan quickly, detailed enough to execute:
-- Include only the recommended approach, not the alternatives you rejected
-- One coherent change per step: name the file(s) and what changes, in one or
-  two short sentences
-- Order steps as they would be implemented; group related edits into one step
-  instead of one step per edit
-- End with a step that verifies the work end to end (commands to run, expected
-  results)
-
-When the plan is decision-ready, call the plan_complete tool alone as your
-final action. End your turn only by asking a questionnaire question or calling
-plan_complete - never end with prose that merely announces the plan.`,
+At the very end of your turn, once you have asked the user questions and are
+happy with your final plan, call the plan_complete tool alone, passing the
+whole plan markdown as its plan argument. This is critical - your turn should
+only end with either asking the user a question or calling plan_complete. Do
+not stop unless it's for these 2 reasons. Do NOT use the questionnaire tool
+to ask "Is this plan okay?" - that's what plan_complete does.`,
 					display: false,
 				},
 			};
@@ -267,13 +286,14 @@ plan_complete - never end with prose that merely announces the plan.`,
 	// handoff is gated, never the choice itself.
 	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (agent_settled latestCommandContext ?? ctx)
 	async function promptPlanApproval(ctx: ExtensionContext, freshContext: ExtensionCommandContext | undefined): Promise<void> {
-		if (!planSteps || planSteps.length === 0) return;
+		if (!plan) return;
 
-		// Show plan steps and prompt for next action
-		const todoListText = planSteps.map((text, i) => `${i + 1}. ☐ ${text}`).join("\n");
+		// Checklist titles are derived from the plan's markdown headings
+		const phases = phaseTitles(plan);
+		const todoListText = phases.map((title, i) => `${i + 1}. ☐ ${title}`).join("\n");
 		const planTodoListMessage = {
 			customType: "plan-todo-list",
-			content: `**Plan Steps (${planSteps.length}):**\n\n${todoListText}`,
+			content: `**Plan Phases (${phases.length}):**\n\n${todoListText}`,
 			display: true,
 		};
 
@@ -298,14 +318,14 @@ plan_complete - never end with prose that merely announces the plan.`,
 				);
 				return;
 			}
-			const steps = planSteps;
+			const savedPlan = plan;
 			persistState();
 			// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationSession)
 			await startFreshImplementation(freshContext, {
-				steps,
+				plan: savedPlan,
 				activate: (ctx) => {
 					planModeEnabled = false;
-					planSteps = steps;
+					plan = savedPlan;
 					if (toolsBeforePlanMode !== undefined) {
 						restoreNormalModeTools();
 					}
@@ -313,7 +333,7 @@ plan_complete - never end with prose that merely announces the plan.`,
 				},
 			});
 		} else if (choice === currentChoice) {
-			if (!planSteps || planSteps.length === 0) return;
+			if (!plan) return;
 
 			planModeEnabled = false;
 			restoreNormalModeTools();
@@ -321,8 +341,7 @@ plan_complete - never end with prose that merely announces the plan.`,
 			persistState();
 
 			// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (formatImplementationHandoff)
-			const stepList = planSteps.map((text, i) => `${i + 1}. ${text}`).join("\n");
-			const execMessage = `Plan mode is now disabled. Full tool access is restored. Implement this plan now:\n\n${stepList}`;
+			const execMessage = `Plan mode is now disabled. Full tool access is restored. Implement this plan now:\n\n${plan}`;
 			pi.sendMessage(planTodoListMessage, { deliverAs: "followUp" });
 			pi.sendMessage(
 				{ customType: "plan-mode-execute", content: execMessage, display: true },
@@ -341,8 +360,8 @@ plan_complete - never end with prose that merely announces the plan.`,
 	pi.on("agent_end", async (_event, ctx) => {
 		if (!planModeEnabled || !ctx.hasUI) return;
 
-		// Steps arrive via the plan_complete tool call, not prose extraction
-		if (!planSteps || planSteps.length === 0) return;
+		// The plan arrives via the plan_complete tool call, not prose extraction
+		if (!plan) return;
 		persistState();
 
 		// Fresh-session handoff needs a command context - agent_end's ctx has no newSession.
@@ -354,7 +373,7 @@ plan_complete - never end with prose that merely announces the plan.`,
 
 	// Restore state on session start/resume from session memory (appendEntry).
 	// Runs on session replacement too (newSession/fork/switch): saved state is
-	// authoritative so the replaced session's mode/steps cannot leak.
+	// authoritative so the replaced session's mode/plan cannot leak.
 	pi.on("session_start", async (event, ctx) => {
 		latestCommandContext = undefined;
 		sessionGeneration += 1;
@@ -370,7 +389,7 @@ plan_complete - never end with prose that merely announces the plan.`,
 		if (event.reason === "startup" && pi.getFlag("plan") === true) {
 			planModeEnabled = true;
 		}
-		planSteps = saved.planSteps ?? saved.activeSteps;
+		plan = saved.plan ?? saved.activePlan;
 		toolsBeforePlanMode = saved.toolsBeforePlanMode;
 
 		if (planModeEnabled) {

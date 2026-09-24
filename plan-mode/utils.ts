@@ -20,7 +20,8 @@ const DESTRUCTIVE_PATTERNS = [
 	/\btruncate\b/i,
 	/\bdd\b/i,
 	/\bshred\b/i,
-	/(^|[^<])>(?!>)/,
+	// Redirects that clobber files are destructive; /dev/null sinks (2>/dev/null) are exempt
+	/(^|[^<])>(?!>|\s*\/dev\/null(?:[\s;|&]|$))/,
 	/>>/,
 	/\bnpm\s+(install|uninstall|update|ci|link|publish)/i,
 	/\byarn\s+(add|remove|install|publish)/i,
@@ -80,6 +81,9 @@ const SAFE_PATTERNS = [
 	/^\s*free\b/,
 	/^\s*git\s+(status|log|diff|show|branch|remote|config\s+--get)/i,
 	/^\s*git\s+ls-/i,
+	/^\s*go\s+doc\b/,
+	// go env -w/-u write the user env file, so only the read form passes
+	/^\s*go\s+env\b(?!\s+-[wu]\b)/,
 	/^\s*npm\s+(list|ls|view|info|search|outdated|audit)/i,
 	/^\s*yarn\s+(list|info|why|audit)/i,
 	/^\s*node\s+--version/i,
@@ -93,6 +97,9 @@ const SAFE_PATTERNS = [
 	/^\s*fd\b/,
 	/^\s*bat\b/,
 	/^\s*eza\b/,
+	// The one explore child plan mode may spawn: read-only tools, no extensions
+	// (no recursion), ephemeral - any other pi invocation stays blocked
+	/^\s*pi\s+--print\s+--no-extensions\s+--no-session\s+--tools\s+read,grep,find,ls\s/,
 ];
 
 // First matching destructive pattern, or the absence of a safe match, formats into the block reason
@@ -104,7 +111,7 @@ export function unsafeCommandReason(command: string): string | undefined {
 }
 
 // pi auto-activates every registerTool() call with no opt-out flag, so plan_complete
-// (and questionnaire, from pi's bundled example extension examples/extensions/questionnaire.ts)
+// (and questionnaire, bundled in ./questionnaire.ts from pi's example)
 // leaks into the active set at startup. narumiruna's required-helpers pattern keeps them
 // plan-mode-only so their schemas cannot pollute normal-mode context and make the model
 // think it is planning.

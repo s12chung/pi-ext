@@ -3,14 +3,14 @@
  * entries (appendEntry) - never in files - as the single source of truth.
  */
 
-import { PLAN_COMPLETE_TOOL_NAME, stepsFromCompletionDetails } from "./completion-tool.ts";
+import { PLAN_COMPLETE_TOOL_NAME, planFromCompletionDetails, validPlanText } from "./completion-tool.ts";
 
-// Source (adapted: latestPlan/activeImplementation plan strings → planSteps/activeSteps step arrays):
+// Source (adapted: latestPlan/activeImplementation plan strings → plan/activePlan markdown):
 // https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/state.ts
 export interface PlanModeState {
 	enabled: boolean;
-	planSteps?: string[];
-	activeSteps?: string[];
+	plan?: string;
+	activePlan?: string;
 	toolsBeforePlanMode?: string[];
 }
 
@@ -39,28 +39,28 @@ export function restorePlanModeState(entries: unknown[]): PlanModeState {
 	if (!isRecord(entry?.data)) return { enabled: false };
 
 	const enabled = entry.data.enabled === true;
-	const persistedSteps = enabled ? stringArray(entry.data.planSteps) : undefined;
-	const recoveredSteps = enabled && !persistedSteps ? latestCompletionSteps(branch.slice(stateEntryIndex + 1)) : undefined;
-	// Handoff entries carry steps with plan mode disabled; read them only then,
+	const persistedPlan = enabled ? validPlanText(entry.data.plan) : undefined;
+	const recoveredPlan = enabled && !persistedPlan ? latestCompletionPlan(branch.slice(stateEntryIndex + 1)) : undefined;
+	// Handoff entries carry the plan with plan mode disabled; read them only then,
 	// like activeImplementation in the source.
 	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/state.ts (restorePlanModeState activeImplementation)
-	const activeSteps = enabled ? undefined : stringArray(entry.data.activeSteps);
+	const activePlan = enabled ? undefined : validPlanText(entry.data.activePlan);
 	return {
 		enabled,
-		planSteps: persistedSteps ?? recoveredSteps,
-		activeSteps,
+		plan: persistedPlan ?? recoveredPlan,
+		activePlan,
 		toolsBeforePlanMode: stringArray(entry.data.toolsBeforePlanMode),
 	};
 }
 
 // Recover the plan from the newest plan_complete toolResult after the state
 // entry (covers a crash between the tool call and the next persist).
-function latestCompletionSteps(entries: SessionEntry[]): string[] | undefined {
+function latestCompletionPlan(entries: SessionEntry[]): string | undefined {
 	for (let index = entries.length - 1; index >= 0; index -= 1) {
 		const message = entries[index]?.message;
 		if (message?.role !== "toolResult" || message.toolName !== PLAN_COMPLETE_TOOL_NAME) continue;
-		const steps = stepsFromCompletionDetails(message.details);
-		if (steps) return steps;
+		const plan = planFromCompletionDetails(message.details);
+		if (plan) return plan;
 	}
 	return undefined;
 }
