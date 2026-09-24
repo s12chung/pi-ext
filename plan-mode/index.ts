@@ -14,16 +14,19 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
+import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key } from "@earendil-works/pi-tui";
+import { Key, Markdown } from "@earendil-works/pi-tui";
 import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils.ts";
 import { restorePlanModeState, type PlanModeState } from "./state.ts";
 import { isCommandContext, startFreshImplementation } from "./fresh-implementation.ts";
 import {
 	normalizePlanCompletion,
 	planCompleted,
+	planCompletionMarkdown,
 	PLAN_COMPLETE_PARAMS,
 	PLAN_COMPLETE_TOOL_NAME,
+	type PlanCompletionRenderResult,
 } from "./completion-tool.ts";
 
 export default function planModeExtension(pi: ExtensionAPI): void {
@@ -121,6 +124,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		handler: async (ctx) => togglePlanMode(ctx),
 	});
 
+	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/completion-tool.ts (renderPlanModeCompletion)
+	const renderPlanCompletion = (result: PlanCompletionRenderResult) =>
+		new Markdown(planCompletionMarkdown(result), 0, 0, getMarkdownTheme());
+
 	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (registerTool: plan_mode_complete)
 	pi.registerTool({
 		name: PLAN_COMPLETE_TOOL_NAME,
@@ -138,6 +145,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			planSteps = parsed.steps;
 			return planCompleted(parsed.steps);
 		},
+		renderResult: renderPlanCompletion,
 	});
 
 	// Block destructive bash commands in plan mode

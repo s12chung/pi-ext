@@ -67,6 +67,25 @@ export function planCompleted(steps: string[]) {
 	};
 }
 
+// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/completion-tool.ts
+// (PlanModeCompletionRenderResult/planModeCompletionMarkdown; the Markdown wrapper that pairs with
+// this lives in index.ts because this module must stay import-free for plain node --test runs)
+export type PlanCompletionRenderResult = {
+	content: Array<{ type: string; text?: string }>;
+	details?: unknown;
+};
+
+export function planCompletionMarkdown(result: PlanCompletionRenderResult): string {
+	const content = result.content
+		.filter((block) => block.type === "text" && typeof block.text === "string")
+		.map((block) => block.text)
+		.join("\n")
+		.trim();
+	if (content) return content;
+	const steps = stepsFromCompletionDetails(result.details);
+	return steps ? `**Proposed Plan**\n\n${steps.map((step, i) => `${i + 1}. ${step}`).join("\n")}` : "";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

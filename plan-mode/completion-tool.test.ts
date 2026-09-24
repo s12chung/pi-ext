@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizePlanCompletion, planCompleted, stepsFromCompletionDetails } from "./completion-tool.ts";
+import { normalizePlanCompletion, planCompleted, planCompletionMarkdown, stepsFromCompletionDetails } from "./completion-tool.ts";
 
 test("normalizePlanCompletion trims step text", () => {
 	assert.deepEqual(normalizePlanCompletion({ steps: [" a ", "b"] }), { ok: true, steps: ["a", "b"] });
@@ -50,4 +50,21 @@ test("planCompleted terminates the turn and round-trips through details", () => 
 	assert.equal(result.terminate, true);
 	assert.equal(result.content[0]?.text, "**Proposed Plan**\n\n1. a\n2. b");
 	assert.deepEqual(stepsFromCompletionDetails(result.details), ["a", "b"]);
+});
+
+test("planCompletionMarkdown renders the result content", () => {
+	const result = planCompleted(["a", "b"]);
+	assert.equal(planCompletionMarkdown({ content: result.content }), "**Proposed Plan**\n\n1. a\n2. b");
+});
+
+test("planCompletionMarkdown falls back to details when content is empty", () => {
+	assert.equal(
+		planCompletionMarkdown({ content: [], details: { version: 1, source: "plan_complete", steps: ["a", "b"] } }),
+		"**Proposed Plan**\n\n1. a\n2. b",
+	);
+});
+
+test("planCompletionMarkdown returns empty without content or details", () => {
+	assert.equal(planCompletionMarkdown({ content: [] }), "");
+	assert.equal(planCompletionMarkdown({ content: [], details: { version: 2, source: "plan_complete" } }), "");
 });
