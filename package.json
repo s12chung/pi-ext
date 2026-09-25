@@ -1,0 +1,23 @@
+{
+	"name": "pi-ext",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Extensions for pi.",
+	"type": "module",
+	"workspaces": [
+		"plan-mode"
+	],
+	"scripts": {
+		"test": "npm --workspaces --if-present run test",
+		"typecheck": "npm --workspaces --if-present run typecheck"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-agent-core": "0.87.1",
+		"@earendil-works/pi-ai": "0.87.1",
+		"@earendil-works/pi-coding-agent": "0.87.1",
+		"@earendil-works/pi-tui": "0.87.1",
+		"@types/node": "^26.6.2",
+		"typebox": "1.3.27",
+		"typescript": "7.0.2"
+	}
+}
