@@ -18,7 +18,8 @@ function planBorder(text: string): string {
 }
 
 export interface BorderColoredEditor {
-	borderColor: (text: string) => string;
+	// Optional to match pi's EditorComponent, whose borderColor starts unassigned
+	borderColor?: (text: string) => string;
 }
 
 /**

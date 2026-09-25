@@ -5,7 +5,7 @@
  * When enabled, built-in write tools are disabled.
  *
  * Features:
- * - /plan command or alt+p to toggle
+ * - /plan command to toggle
  * - Bash restricted to allowlisted read-only commands
  * - Plan-only tools (questionnaire, plan_complete) active only while planning
  * - Plan submitted via plan_complete as free-flow markdown (format-validated;
@@ -15,14 +15,15 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
+import { appendFileSync } from "node:fs";
 import { CustomEditor, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key, Markdown } from "@earendil-works/pi-tui";
+import { Markdown } from "@earendil-works/pi-tui";
 import { setIdleBorderColor, setPlanBorderColor, tintPlanBorders } from "./border-tint.ts";
 import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils.ts";
 import questionnaire from "./questionnaire.ts";
 import { restorePlanModeState, type PlanModeState } from "./state.ts";
-import { isCommandContext, startFreshImplementation } from "./fresh-implementation.ts";
+import { isCommandContext, isStaleExtensionContextError, startFreshImplementation } from "./fresh-implementation.ts";
 import {
 	normalizePlanCompletion,
 	phaseTitles,
@@ -45,19 +46,20 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 	let planModeEnabled = false;
 	let plan: string | undefined;
+	// Staged by plan_complete, consumed by the agent_settled menu: a later settle
+	// (queued follow-up delivered, refine turn) must not re-stack the picker
+	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (readyPresentationIntent)
+	let awaitingApproval = false;
 	let toolsBeforePlanMode: string[] | undefined;
-	// Goes stale on session replacement; cleared in session_start, re-captured by the command handlers
 	let latestCommandContext: ExtensionCommandContext | undefined;
 	let installedEditorFactory: EditorFactory | undefined;
 	// Read at wrap time: once our unmarked factory owns the slot, zen's mark on it is hidden
 	let zenEditorDetected = false;
 	let sessionGeneration = 0;
-
-	pi.registerFlag("plan", {
-		description: "Start in plan mode (read-only exploration)",
-		type: "boolean",
-		default: false,
-	});
+	// A fresh session receives its setup entries after session_start, so its
+	// state is refreshed again before the first agent start
+	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (refreshStateBeforeFirstAgentStart)
+	let refreshStateBeforeFirstAgentStart = false;
 
 	function isZentuiFactory(factory: EditorFactory | undefined): boolean {
 		return (factory as Record<PropertyKey, unknown> | undefined)?.[ZENTUI_EDITOR_OWNER] !== undefined;
@@ -121,6 +123,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	function togglePlanMode(ctx: ExtensionContext): void {
 		planModeEnabled = !planModeEnabled;
 		plan = undefined;
+		awaitingApproval = false;
 
 		if (planModeEnabled) {
 			enablePlanModeTools();
@@ -133,10 +136,24 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		persistState();
 	}
 
+	// pi grants newSession() (and fork/switch/reload) only to command-handler
+	// contexts - it creates them solely when executing an extension command and
+	// inside withSession (runner.js createCommandContext has no other callers).
+	// Events, tools, and shortcuts can therefore never start a session, which is
+	// why /plan is the only plan-mode entry point and the fresh handoff below
+	// bounces through it when the captured context is missing.
 	pi.registerCommand("plan", {
 		description: "Toggle plan mode (read-only exploration)",
 		handler: async (_args, ctx) => {
 			latestCommandContext = ctx;
+			// With a completed plan, bare /plan reopens the approval menu instead of
+			// toggling the plan away (the picker's exit choice discards)
+			// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (/plan showCurrent)
+			if (planModeEnabled && plan && ctx.hasUI) {
+				debugLog("/plan reopen");
+				await promptPlanApproval(ctx, ctx);
+				return;
+			}
 			togglePlanMode(ctx);
 		},
 	});
@@ -144,23 +161,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("todos", {
 		description: "Show the current plan phases",
 		handler: async (_args, ctx) => {
-			latestCommandContext = ctx;
 			if (!plan) {
 				ctx.ui.notify("No plan phases. Create a plan first with /plan", "info");
 				return;
 			}
 			const list = phaseTitles(plan).map((title, i) => `${i + 1}. ${title}`).join("\n");
 			ctx.ui.notify(`Plan Phases:\n${list}`, "info");
-			if (!planModeEnabled || !ctx.hasUI) return;
-			// The command handler's ctx has newSession(), so the fresh-session
-			// choice works here even when plan mode was entered via alt+p or --plan.
-			await promptPlanApproval(ctx, ctx);
 		},
-	});
-
-	pi.registerShortcut(Key.alt("p"), {
-		description: "Toggle plan mode",
-		handler: async (ctx) => togglePlanMode(ctx),
 	});
 
 	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/completion-tool.ts (renderPlanModeCompletion)
@@ -182,6 +189,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			if (!parsed.ok) throw new Error(parsed.error);
 
 			plan = parsed.plan;
+			awaitingApproval = true;
+			debugLog("plan_complete", { phases: phaseTitles(parsed.plan).length });
 			return planCompleted(parsed.plan);
 		},
 		renderResult: renderPlanCompletion,
@@ -226,7 +235,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	});
 
 	// Inject plan/execution context before agent starts
-	pi.on("before_agent_start", async () => {
+	pi.on("before_agent_start", async (_event, ctx) => {
+		refreshStateForFirstPrompt(ctx);
 		if (planModeEnabled) {
 			return {
 				message: {
@@ -297,6 +307,12 @@ to ask "Is this plan okay?" - that's what plan_complete does.`,
 			display: true,
 		};
 
+		// Bail when the session was replaced or the plan was superseded while the
+		// menu was open
+		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (completedPlanIsCurrent)
+		const menuGeneration = sessionGeneration;
+		const menuPlan = plan;
+
 		// Choice labels are bound to constants and compared with === against the
 		// same constants, so the "(recommended)" suffix cannot drift from the check.
 		// Source: https://github.com/bacnh85/pi-extensions/blob/main/pi-plan/extensions/index.ts (handlePlanApproval)
@@ -304,34 +320,32 @@ to ask "Is this plan okay?" - that's what plan_complete does.`,
 		const currentChoice = "Execute in current session";
 		const stayChoice = "Stay in plan mode";
 		const refineChoice = "Refine the plan";
-		const choice = await ctx.ui.select("Plan mode - what next?", [freshChoice, currentChoice, stayChoice, refineChoice]);
+		const exitChoice = "Exit plan mode (discard plan)";
+		const choice = await ctx.ui.select("Plan mode - what next?", [freshChoice, currentChoice, stayChoice, refineChoice, exitChoice]);
+		if (sessionGeneration !== menuGeneration || plan !== menuPlan) return;
 		if (!choice || choice === stayChoice) return;
 
+		if (choice === exitChoice) {
+			togglePlanMode(ctx);
+		}
+
 		if (choice === freshChoice) {
-			// No command context means no newSession() - bail to the interactive
-			// command instead of hiding the choice.
-			// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationFromState isCommandContext bail)
+			// No command context means no newSession() (see the createCommandContext
+			// note above) - prefill /plan, which runs with one and reopens this
+			// picker ready for the handoff
 			if (!freshContext) {
+				debugLog("fresh bounce", { hasCommandContext: false });
+				ctx.ui.setEditorText("/plan");
 				ctx.ui.notify(
-					"Fresh implementation requires the interactive /todos command. Run /todos and try again.",
-					"warning",
+					"Fresh sessions can only be started from a command - /plan is in the editor, press Enter and pick fresh execution again.",
+					"info",
 				);
 				return;
 			}
 			const savedPlan = plan;
 			persistState();
 			// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationSession)
-			await startFreshImplementation(freshContext, {
-				plan: savedPlan,
-				activate: (ctx) => {
-					planModeEnabled = false;
-					plan = savedPlan;
-					if (toolsBeforePlanMode !== undefined) {
-						restoreNormalModeTools();
-					}
-					updateStatus(ctx);
-				},
-			});
+			await startFreshImplementation(freshContext, { plan: savedPlan });
 		} else if (choice === currentChoice) {
 			if (!plan) return;
 
@@ -356,39 +370,65 @@ to ask "Is this plan okay?" - that's what plan_complete does.`,
 		}
 	}
 
-	// Handle plan completion and plan mode UI
-	pi.on("agent_end", async (_event, ctx) => {
-		if (!planModeEnabled || !ctx.hasUI) return;
-
-		// The plan arrives via the plan_complete tool call, not prose extraction
-		if (!plan) return;
+	// Persist state after every planning turn (the plan itself arrives via the
+	// plan_complete tool call, not prose extraction)
+	pi.on("agent_end", async () => {
+		if (!planModeEnabled) return;
 		persistState();
+	});
 
-		// Fresh-session handoff needs a command context - agent_end's ctx has no newSession.
+	// Present the approval menu once the agent truly settles - not between a
+	// turn end and delivery of still-queued follow-up messages, which would
+	// stack a second menu behind the first
+	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (agent_settled)
+	pi.on("agent_settled", async (_event, ctx) => {
+		if (!planModeEnabled || !ctx.hasUI) return;
+		if (!plan || !awaitingApproval) return;
+		if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
+		awaitingApproval = false;
+		debugLog("agent_settled menu", { idle: true, pending: ctx.hasPendingMessages() });
+
+		// Fresh-session handoff needs a command context - agent_settled's ctx has no newSession.
 		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (latestCommandContext)
 		const freshContext =
 			latestCommandContext !== undefined && isCommandContext(latestCommandContext) ? latestCommandContext : undefined;
-		await promptPlanApproval(ctx, freshContext);
+		debugLog("approval menu", { hasCommandContext: freshContext !== undefined });
+		try {
+			await promptPlanApproval(ctx, freshContext);
+		} catch (error: unknown) {
+			if (!isStaleExtensionContextError(error)) throw error;
+		}
+	});
+
+	// Runs before dispose() invalidates this instance's contexts: retire the
+	// deferred status refreshes and editor re-checks so nothing fires on a
+	// stale ctx afterwards
+	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (session_shutdown)
+	pi.on("session_shutdown", async () => {
+		debugLog("session_shutdown");
+		latestCommandContext = undefined;
+		sessionGeneration += 1;
+		refreshStateBeforeFirstAgentStart = false;
 	});
 
 	// Restore state on session start/resume from session memory (appendEntry).
 	// Runs on session replacement too (newSession/fork/switch): saved state is
 	// authoritative so the replaced session's mode/plan cannot leak.
 	pi.on("session_start", async (event, ctx) => {
+		debugLog("session_start", { reason: event.reason });
 		latestCommandContext = undefined;
 		sessionGeneration += 1;
+		awaitingApproval = false;
+		// A fresh session receives its setup entries (the handed-off plan) only
+		// after session_start, so the restore below misses them
+		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (refreshStateBeforeFirstAgentStart)
+		refreshStateBeforeFirstAgentStart = event.reason === "new";
 
 		// Restore persisted state, recovering the plan from the latest
 		// plan_complete toolResult when no state entry was persisted after it
 		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/state.ts (restorePlanModeState)
 		const saved = restorePlanModeState(ctx.sessionManager.getEntries());
 		planModeEnabled = saved.enabled;
-		// --plan applies only to the initial launch - never to mid-session
-		// replacements (manual /new, fresh-session handoff)
-		// Source: https://github.com/bacnh85/pi-extensions/blob/main/pi-plan/extensions/index.ts (session_start --plan gating)
-		if (event.reason === "startup" && pi.getFlag("plan") === true) {
-			planModeEnabled = true;
-		}
 		plan = saved.plan ?? saved.activePlan;
 		toolsBeforePlanMode = saved.toolsBeforePlanMode;
 
@@ -413,4 +453,27 @@ to ask "Is this plan okay?" - that's what plan_complete does.`,
 			}
 		}
 	});
+
+	// Picks up the handed-off plan that setup appended after the fresh session's
+	// session_start had already restored state
+	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (refreshStateForFirstPrompt)
+	function refreshStateForFirstPrompt(ctx: ExtensionContext): void {
+		if (!refreshStateBeforeFirstAgentStart) return;
+		refreshStateBeforeFirstAgentStart = false;
+		const saved = restorePlanModeState(ctx.sessionManager.getEntries());
+		plan = saved.plan ?? saved.activePlan;
+		toolsBeforePlanMode = saved.toolsBeforePlanMode;
+		debugLog("refreshStateForFirstPrompt", { restoredPlan: plan !== undefined });
+	}
+
+	// Env-gated trace for menu/handoff diagnosis: PLAN_MODE_DEBUG=<file> pi ...
+	function debugLog(event: string, data?: unknown): void {
+		const path = process.env.PLAN_MODE_DEBUG;
+		if (!path) return;
+		try {
+			appendFileSync(path, `${new Date().toISOString()} ${event}${data === undefined ? "" : ` ${JSON.stringify(data)}`}\n`);
+		} catch {
+			// diagnostics must never break the session
+		}
+	}
 }

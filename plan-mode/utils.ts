@@ -91,6 +91,7 @@ const SAFE_PATTERNS = [
 	/^\s*curl\s/i,
 	/^\s*wget\s+-O\s*-/i,
 	/^\s*jq\b/,
+	/^\s*yq\b/,
 	/^\s*sed\s+-n/i,
 	/^\s*awk\b/,
 	/^\s*rg\b/,

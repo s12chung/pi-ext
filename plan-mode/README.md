@@ -13,7 +13,7 @@ mkdir -p ~/.pi/extensions
 ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 ```
 
-2. Start pi and enter plan mode with `/plan`, `alt+p`, or launch with `--plan`.
+2. Start pi and enter plan mode with `/plan`.
 3. Ask the agent to analyze code and plan a change. While planning:
    - `edit`/`write` are disabled and bash is restricted to a read-only allowlist
    - the editor border above and below the prompt turns orange, heavy-weight (theme `mdHeading` role); any installed custom editor (e.g. a theme UI) is wrapped, not replaced
@@ -25,15 +25,14 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
    - **Execute in fresh session (recommended)** — starts a new session whose kickoff prompt embeds the plan; the planning transcript stays behind in the parent session
    - **Execute in current session** — restores full tool access and runs the plan in place
    - **Stay in plan mode** / **Refine the plan** — keep iterating
+   - **Exit plan mode (discard plan)** — drop the plan and restore full tool access
 
 ## Commands
 
 | Command | Action |
 |---|---|
-| `/plan` | Toggle plan mode |
-| `/todos` | Show the current plan phases or approval picker when a plan is ready |
-| `alt+p` | Toggle plan mode (shortcut) |
-| `--plan` | Start pi in plan mode (initial launch only) |
+| `/plan` | Toggle plan mode; with a completed plan, reopen the approval picker |
+| `/todos` | Show the current plan phases |
 
 ## Persistence and recovery
 
@@ -41,6 +40,10 @@ State is appended to the session file via `appendEntry("plan-mode", ...)`. On re
 
 ## Tests
 
+From the repo root (installs the type dependencies into the root `node_modules`):
+
 ```sh
-node --test *.test.ts
+npm install
+npm test
+npm run typecheck
 ```
