@@ -171,8 +171,8 @@ test("setMode swaps, enters, and persists the successor", () => {
 	assert.deepEqual(entries, [{ mode: "default", activePlan: undefined, toolsBeforePlanMode: ["read"] }]);
 });
 
-test("approval menu: stay keeps the planning mode untouched", async () => {
-	const { pi, ctx, slot, entries, sent } = approvalFixture("Stay in plan mode");
+test("approval menu: stay opens the refinement editor, empty keeps planning", async () => {
+	const { pi, ctx, slot, entries, sent } = approvalFixture("Stay and refine the plan");
 	await promptPlanApproval(pi, ctx, undefined, slot);
 	assert.ok(isPlanningMode(slot.mode));
 	assert.deepEqual(entries, []);
@@ -180,25 +180,15 @@ test("approval menu: stay keeps the planning mode untouched", async () => {
 });
 
 test("approval menu: exit swaps to default and persists", async () => {
-	const { pi, ctx, slot, entries } = approvalFixture("Exit plan mode (discard plan)");
+	const { pi, ctx, slot, entries } = approvalFixture("Exit plan mode (plan stays in context)");
 	await promptPlanApproval(pi, ctx, undefined, slot);
 	assert.ok(isDefaultMode(slot.mode));
 	assert.equal(entries.length, 1);
 	assert.equal((entries[0] as { mode: string }).mode, "default");
 });
 
-test("approval menu: current-session choice sends the execution handoff", async () => {
-	const { pi, ctx, slot, entries, sent } = approvalFixture("Execute in current session");
-	await promptPlanApproval(pi, ctx, undefined, slot);
-	assert.ok(isDefaultMode(slot.mode));
-	assert.equal((entries[0] as { mode: string }).mode, "default");
-	assert.equal(sent.length, 1);
-	assert.equal(sent[0].customType, "plan-mode-execute");
-	assert.ok((sent[0].content as string).includes(PLAN));
-});
-
-test("approval menu: refine sends the refinement as a follow-up", async () => {
-	const { pi, ctx, slot, sent } = approvalFixture("Refine the plan", {
+test("approval menu: stay sends the refinement as a follow-up", async () => {
+	const { pi, ctx, slot, sent } = approvalFixture("Stay and refine the plan", {
 		editor: async () => "make it faster",
 	});
 	await promptPlanApproval(pi, ctx, undefined, slot);
@@ -207,7 +197,7 @@ test("approval menu: refine sends the refinement as a follow-up", async () => {
 });
 
 test("approval menu: bails when the session was replaced while open", async () => {
-	const { pi, ctx, slot, entries } = approvalFixture("Exit plan mode (discard plan)", {
+	const { pi, ctx, slot, entries } = approvalFixture("Exit plan mode (plan stays in context)", {
 		onMenu: () => {
 			slot.rev += 1;
 		},
@@ -218,7 +208,7 @@ test("approval menu: bails when the session was replaced while open", async () =
 });
 
 test("approval menu: bails when the plan was superseded while open", async () => {
-	const { pi, ctx, slot, entries } = approvalFixture("Exit plan mode (discard plan)", {
+	const { pi, ctx, slot, entries } = approvalFixture("Exit plan mode (plan stays in context)", {
 		onMenu: () => {
 			const superseded = planningWithPlan();
 			superseded.phase = new ApprovePhase("## 1. Reworked\nA different plan.");
@@ -231,7 +221,7 @@ test("approval menu: bails when the plan was superseded while open", async () =>
 });
 
 test("approval menu: without a plan it never opens", async () => {
-	const { pi, ctx, slot, sent } = approvalFixture("Exit plan mode (discard plan)");
+	const { pi, ctx, slot, sent } = approvalFixture("Exit plan mode (plan stays in context)");
 	slot.mode = new PlanningMode();
 	await promptPlanApproval(pi, ctx, undefined, slot);
 	assert.deepEqual(sent, []);

@@ -49,7 +49,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		handler: async (_args, ctx) => {
 			latestCommandContext = ctx;
 			// With a completed plan, bare /plan reopens the approval menu instead of
-			// toggling the plan away (the picker's exit choice discards)
+			// toggling the plan away (the picker's exit choice is the way out)
 			// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (/plan showCurrent)
 			if (isPlanningMode(modeSlot.mode) && modeSlot.mode.plan && ctx.hasUI) {
 				debugLog("/plan reopen");

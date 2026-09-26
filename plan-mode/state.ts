@@ -133,20 +133,12 @@ export async function promptPlanApproval(
 	planning.rejectApproval();
 
 	// Choice labels are bound to constants and compared with === against the
-	// same constants, so the "(recommended)" suffix cannot drift from the check.
+	// same constants, so a label cannot drift from the check.
 	// Source: https://github.com/bacnh85/pi-extensions/blob/main/pi-plan/extensions/index.ts (handlePlanApproval)
-	const freshChoice = "Execute in fresh session (recommended)";
-	const currentChoice = "Execute in current session";
-	const stayChoice = "Stay in plan mode";
-	const refineChoice = "Refine the plan";
-	const exitChoice = "Exit plan mode (discard plan)";
-	const choice = await ctx.ui.select("Plan mode - what next?", [
-		freshChoice,
-		currentChoice,
-		stayChoice,
-		refineChoice,
-		exitChoice,
-	]);
+	const freshChoice = "Execute in fresh session";
+	const stayChoice = "Stay and refine the plan";
+	const exitChoice = "Exit plan mode (plan stays in context)";
+	const choice = await ctx.ui.select("Plan mode - what next?", [freshChoice, stayChoice, exitChoice]);
 	if (slot.rev !== menuRev) return;
 	// A stale picker must not act on the replacement session's restored mode:
 	// without the rev check its setMode would clobber it before enter() throws
@@ -155,7 +147,16 @@ export async function promptPlanApproval(
 	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (completedPlanIsCurrent)
 	const current = slot.mode;
 	if (!isPlanningMode(current) || isApprovePhase(current.phase)) return;
-	if (!choice || choice === stayChoice) return;
+	// Esc on the picker is a plain stay; the explicit choice opens the
+	// refinement editor, where an empty submit or escape stays too
+	if (!choice) return;
+	if (choice === stayChoice) {
+		const refinement = await ctx.ui.editor("Refine the plan:", "");
+		if (refinement?.trim()) {
+			pi.sendUserMessage(refinement.trim(), { deliverAs: "followUp" });
+		}
+		return;
+	}
 
 	if (choice === exitChoice) {
 		setMode(pi, ctx, slot, current.next());
@@ -176,20 +177,6 @@ export async function promptPlanApproval(
 		pi.appendEntry("plan-mode", current.toState());
 		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationSession)
 		await startFreshImplementation(freshContext, { plan: menuPlan });
-	} else if (choice === currentChoice) {
-		setMode(pi, ctx, slot, new DefaultMode());
-
-		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (formatImplementationHandoff)
-		const execMessage = `Plan mode is now disabled. Full tool access is restored. Implement this plan now:\n\n${menuPlan}`;
-		pi.sendMessage(
-			{ customType: "plan-mode-execute", content: execMessage, display: true },
-			{ triggerTurn: true, deliverAs: "followUp" },
-		);
-	} else if (choice === refineChoice) {
-		const refinement = await ctx.ui.editor("Refine the plan:", "");
-		if (refinement?.trim()) {
-			pi.sendUserMessage(refinement.trim(), { deliverAs: "followUp" });
-		}
 	}
 }
 

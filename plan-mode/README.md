@@ -21,10 +21,9 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
    - the agent asks clarifying questions via the `questionnaire` tool
 4. When the plan is decision-ready, the agent calls `plan_complete` with the plan as free-flow markdown — numbered phase headings in broad strokes, ending with a testing and verification phase. Invalid formats are rejected with a corrective error so the agent resubmits; only a valid plan is displayed.
 5. Choose what happens next:
-   - **Execute in fresh session (recommended)** — starts a new session whose kickoff prompt embeds the plan; the planning transcript stays behind in the parent session
-   - **Execute in current session** — restores full tool access and runs the plan in place
-   - **Stay in plan mode** / **Refine the plan** — keep iterating
-   - **Exit plan mode (discard plan)** — drop the plan and restore full tool access
+   - **Execute in fresh session** — starts a new session whose kickoff prompt embeds the plan; the planning transcript stays behind in the parent session
+   - **Stay and refine the plan** — keep iterating; an empty refinement submission (or Esc, on either the picker or the editor) just stays
+   - **Exit plan mode (plan stays in context)** — restore full access; the plan remains in the transcript, so you can act on it yourself
 
 ## Commands
 
