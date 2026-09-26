@@ -92,14 +92,7 @@ test("planCompletionMarkdown renders the result content", () => {
 	assert.equal(planCompletionMarkdown({ content: result.content }), `**Proposed Plan**\n\n${PLAN}`);
 });
 
-test("planCompletionMarkdown falls back to details when content is empty", () => {
-	assert.equal(
-		planCompletionMarkdown({ content: [], details: { version: 1, source: "plan_complete", plan: PLAN } }),
-		`**Proposed Plan**\n\n${PLAN}`,
-	);
-});
-
-test("planCompletionMarkdown returns empty without content or details", () => {
+test("planCompletionMarkdown returns empty without text content", () => {
 	assert.equal(planCompletionMarkdown({ content: [] }), "");
 	assert.equal(planCompletionMarkdown({ content: [], details: { version: 2, source: "plan_complete" } }), "");
 });

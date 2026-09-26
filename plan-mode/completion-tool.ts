@@ -120,15 +120,16 @@ export type PlanCompletionRenderResult = {
 	details?: unknown;
 };
 
+// Deviates from the source: no planFromCompletionDetails fallback here. pi always hands
+// renderResult a populated content (AgentToolResult.content is required; thrown errors become
+// text results), so that branch was unreachable in prod - details-based recovery is state.ts's
+// latestCompletionPlan instead.
 export function planCompletionMarkdown(result: PlanCompletionRenderResult): string {
-	const content = result.content
+	return result.content
 		.filter((block) => block.type === "text" && typeof block.text === "string")
 		.map((block) => block.text)
 		.join("\n")
 		.trim();
-	if (content) return content;
-	const plan = planFromCompletionDetails(result.details);
-	return plan ? `**Proposed Plan**\n\n${plan}` : "";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
