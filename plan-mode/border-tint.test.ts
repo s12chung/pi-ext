@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { setIdleBorderColor, setPlanBorderColor, tintPlanBorders } from "./border-tint.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	ensureBorderTint,
+	setIdleBorderColor,
+	setPlanBorderActive,
+	setPlanBorderColor,
+	tintPlanBorders,
+	type BorderColoredEditor,
+} from "./border-tint.ts";
 
 function fakeEditor() {
 	return {
@@ -48,4 +56,34 @@ test("idle border color can emulate a theme UI's static look", () => {
 	assert.equal(editor.borderColor("──"), "<plan>━━</plan>");
 	active.value = false;
 	assert.equal(editor.borderColor("──"), "<gray>──</gray>");
+});
+
+test("ensureBorderTint wraps the installed factory once and follows plan-active flips", () => {
+	const editor = fakeEditor();
+	const base = () => editor;
+	let installed: unknown;
+	const ctx = {
+		hasUI: true,
+		ui: {
+			getEditorComponent: () => (installed === undefined ? base : (installed as typeof base)),
+			setEditorComponent: (factory: unknown) => {
+				installed = factory;
+			},
+			theme: { fg: (_role: string, text: string) => `<t>${text}</t>` },
+		},
+	} as unknown as ExtensionContext;
+
+	ensureBorderTint(ctx);
+	assert.notEqual(installed, base);
+
+	const wrapped = (installed as (tui: unknown, theme: unknown, keybindings: unknown) => BorderColoredEditor)({}, {}, {});
+	setPlanBorderActive(false);
+	assert.equal(wrapped.borderColor?.("──"), "<b>──</b>");
+	setPlanBorderActive(true);
+	assert.equal(wrapped.borderColor?.("──"), "<t>━━</t>");
+
+	// Idempotent: the already-installed factory is not wrapped again
+	ensureBorderTint(ctx);
+	setPlanBorderActive(false);
+	assert.equal(wrapped.borderColor?.("──"), "<b>──</b>");
 });

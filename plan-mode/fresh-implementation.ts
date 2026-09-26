@@ -6,7 +6,7 @@
 
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { PlanModeState } from "./state.ts";
+import { DefaultMode } from "./mode.ts";
 
 type NewSessionOptions = Exclude<Parameters<ExtensionCommandContext["newSession"]>[0], undefined>;
 type ReplacementContext = Parameters<NonNullable<NewSessionOptions["withSession"]>>[0];
@@ -45,8 +45,8 @@ export async function startFreshImplementation(
 	const parentSession = ctx.sessionManager.getSessionFile();
 	let setupError: string | undefined;
 
-	// The plan rides the disabled-state field, like activeImplementation in
-	// narumiruna's destinationState, so restorePlanModeState reads it. The new
+	// The plan rides DefaultMode's activePlan, like activeImplementation in
+	// narumiruna's destinationState, so restoreMode reads it. The new
 	// session's session_start fires before setup appends the entry, so its
 	// state is refreshed again before the first agent start instead.
 	let result: Awaited<ReturnType<ExtensionCommandContext["newSession"]>>;
@@ -55,10 +55,7 @@ export async function startFreshImplementation(
 			...(parentSession ? { parentSession } : {}),
 			setup: async (sessionManager) => {
 				try {
-					sessionManager.appendCustomEntry("plan-mode", {
-						enabled: false,
-						activePlan: options.plan,
-					} satisfies PlanModeState);
+					sessionManager.appendCustomEntry("plan-mode", new DefaultMode(options.plan).toState());
 				} catch (error: unknown) {
 					setupError = safeErrorDetail(error);
 				}

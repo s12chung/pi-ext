@@ -2,7 +2,15 @@
  * Structured plan submission for plan mode — replaces regex extraction of
  * "Plan:" sections from assistant prose with an explicit tool call. The plan
  * is free-flow markdown; phase titles are derived from its headings.
+ *
+ * Also owns the planning-phase interface stored by PlanningMode (mode.ts):
+ * explore → approval, advanced only by plan_complete, plus the tool's
+ * registration and rendering.
  */
+
+import { getMarkdownTheme, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Markdown } from "@earendil-works/pi-tui";
+import type { Mode } from "./mode.ts";
 
 // Source (adapted: plan_mode_complete/plan string → plan_complete/plan markdown
 // with format validation and phase-title extraction):
@@ -12,6 +20,12 @@ export const PLAN_COMPLETE_VERSION = 1;
 // Stated only in validation errors, never in the prompt - a mentioned count
 // anchors the model into padding the plan to exactly that many phases
 export const PLAN_COMPLETE_MAX_PHASES = 10;
+
+// The phases of the planning flow, advanced by plan_complete: explore until
+// the plan is submitted, approval while the menu is owed - opening the menu
+// consumes the phase, so rejection simply rests back in explore
+export const PLANNING_PHASES = ["explore", "approval"] as const;
+export type PlanningPhase = (typeof PLANNING_PHASES)[number];
 
 export type PlanCompletionDetails = {
 	version: typeof PLAN_COMPLETE_VERSION;
@@ -100,21 +114,102 @@ export function validPlanText(value: unknown): string | undefined {
 	return normalized.ok ? normalized.plan : undefined;
 }
 
-export function planCompleted(plan: string) {
+export interface PlanCompletedResult {
+	content: Array<{ type: "text"; text: string }>;
+	details: PlanCompletionDetails;
+	terminate: true;
+}
+
+export function planCompleted(plan: string): PlanCompletedResult {
 	return {
-		content: [{ type: "text" as const, text: `**Proposed Plan**\n\n${plan}` }],
+		content: [{ type: "text", text: `**Proposed Plan**\n\n${plan}` }],
 		details: {
 			version: PLAN_COMPLETE_VERSION,
 			source: PLAN_COMPLETE_TOOL_NAME,
 			plan,
-		} satisfies PlanCompletionDetails,
+		},
 		terminate: true,
 	};
 }
 
+// The phases under PlanningMode, stored by it: explore until the plan is
+// submitted, approval while it awaits the menu
+export abstract class PlanningPhaseState {
+	abstract readonly id: PlanningPhase;
+	abstract readonly plan: string | undefined;
+	// explore → approval; approval re-enters approval with the refined plan
+	abstract submitPlan(plan: string): PlanningPhaseState;
+
+	// plan_complete execution shared by both phases: validate, transition,
+	// build the tool result
+	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (registerTool: plan_mode_complete)
+	completePlan(params: unknown): { next: PlanningPhaseState; result: PlanCompletedResult } {
+		const parsed = normalizePlanCompletion(params);
+		if (!parsed.ok) throw new Error(parsed.error);
+		return { next: this.submitPlan(parsed.plan), result: planCompleted(parsed.plan) };
+	}
+
+	// Whether the agent_settled menu is owed for this phase
+	shouldPromptApproval(): boolean {
+		return false;
+	}
+}
+
+export class ExplorePhase extends PlanningPhaseState {
+	readonly id = "explore" as const;
+	readonly plan: string | undefined = undefined;
+
+	submitPlan(plan: string): PlanningPhaseState {
+		return new ApprovePhase(plan);
+	}
+}
+
+// Exists only while the menu is owed: promptPlanApproval rejects it back to
+// explore when the menu opens
+export class ApprovePhase extends PlanningPhaseState {
+	readonly id = "approval" as const;
+	readonly plan: string;
+
+	constructor(plan: string) {
+		super();
+		this.plan = plan;
+	}
+
+	submitPlan(plan: string): PlanningPhaseState {
+		return new ApprovePhase(plan);
+	}
+
+	shouldPromptApproval(): boolean {
+		return true;
+	}
+}
+
+export function isApprovePhase(phase: PlanningPhaseState): phase is ApprovePhase {
+	return phase instanceof ApprovePhase;
+}
+
+// setActiveTools only toggles visibility of registered tools, so this runs
+// once at startup and execute delegates to the live mode object
+export function registerCompletionTool(pi: ExtensionAPI, currentMode: () => Mode): void {
+	pi.registerTool({
+		name: PLAN_COMPLETE_TOOL_NAME,
+		label: "Complete plan",
+		description:
+			"Use this tool when you have completed the planning phase and are ready to submit the plan. Call this tool: after you have written a complete plan, after you have clarified any questions with the user, when you are confident that the plan is ready for implementation. Do NOT call this tool: before you have finalized the plan, if you still have unanswered questions about the implementation, if the user has indicated that they want to continue planning.",
+		parameters: PLAN_COMPLETE_PARAMS,
+		async execute(_toolCallId, params) {
+			return currentMode().completePlan(params);
+		},
+		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/completion-tool.ts (renderPlanModeCompletion)
+		renderResult: (result: PlanCompletionRenderResult) =>
+			new Markdown(planCompletionMarkdown(result), 0, 0, getMarkdownTheme()),
+	});
+}
+
 // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/completion-tool.ts
-// (PlanModeCompletionRenderResult/planModeCompletionMarkdown; the Markdown wrapper that pairs with
-// this lives in index.ts because this module must stay import-free for plain node --test runs)
+// (PlanModeCompletionRenderResult/planModeCompletionMarkdown; the Markdown wrapper that pairs
+// with this is registerCompletionTool above - plain node --test runs load the pi packages fine,
+// as mode.test.ts already proves)
 export type PlanCompletionRenderResult = {
 	content: Array<{ type: string; text?: string }>;
 	details?: unknown;
