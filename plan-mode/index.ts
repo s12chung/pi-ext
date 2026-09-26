@@ -158,18 +158,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerCommand("todos", {
-		description: "Show the current plan phases",
-		handler: async (_args, ctx) => {
-			if (!plan) {
-				ctx.ui.notify("No plan phases. Create a plan first with /plan", "info");
-				return;
-			}
-			const list = phaseTitles(plan).map((title, i) => `${i + 1}. ${title}`).join("\n");
-			ctx.ui.notify(`Plan Phases:\n${list}`, "info");
-		},
-	});
-
 	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/completion-tool.ts (renderPlanModeCompletion)
 	const renderPlanCompletion = (result: PlanCompletionRenderResult) =>
 		new Markdown(planCompletionMarkdown(result), 0, 0, getMarkdownTheme());
@@ -298,15 +286,6 @@ to ask "Is this plan okay?" - that's what plan_complete does.`,
 	async function promptPlanApproval(ctx: ExtensionContext, freshContext: ExtensionCommandContext | undefined): Promise<void> {
 		if (!plan) return;
 
-		// Checklist titles are derived from the plan's markdown headings
-		const phases = phaseTitles(plan);
-		const todoListText = phases.map((title, i) => `${i + 1}. ☐ ${title}`).join("\n");
-		const planTodoListMessage = {
-			customType: "plan-todo-list",
-			content: `**Plan Phases (${phases.length}):**\n\n${todoListText}`,
-			display: true,
-		};
-
 		// Bail when the session was replaced or the plan was superseded while the
 		// menu was open
 		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (completedPlanIsCurrent)
@@ -356,7 +335,6 @@ to ask "Is this plan okay?" - that's what plan_complete does.`,
 
 			// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (formatImplementationHandoff)
 			const execMessage = `Plan mode is now disabled. Full tool access is restored. Implement this plan now:\n\n${plan}`;
-			pi.sendMessage(planTodoListMessage, { deliverAs: "followUp" });
 			pi.sendMessage(
 				{ customType: "plan-mode-execute", content: execMessage, display: true },
 				{ triggerTurn: true, deliverAs: "followUp" },
@@ -364,7 +342,6 @@ to ask "Is this plan okay?" - that's what plan_complete does.`,
 		} else if (choice === refineChoice) {
 			const refinement = await ctx.ui.editor("Refine the plan:", "");
 			if (refinement?.trim()) {
-				pi.sendMessage(planTodoListMessage, { deliverAs: "followUp" });
 				pi.sendUserMessage(refinement.trim(), { deliverAs: "followUp" });
 			}
 		}
