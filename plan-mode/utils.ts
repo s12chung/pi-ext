@@ -98,9 +98,6 @@ const SAFE_PATTERNS = [
 	/^\s*fd\b/,
 	/^\s*bat\b/,
 	/^\s*eza\b/,
-	// The one explore child plan mode may spawn: read-only tools, no extensions
-	// (no recursion), ephemeral - any other pi invocation stays blocked
-	/^\s*pi\s+--print\s+--no-extensions\s+--no-session\s+--tools\s+read,grep,find,ls\s/,
 ];
 
 // First matching destructive pattern, or the absence of a safe match, formats into the block reason

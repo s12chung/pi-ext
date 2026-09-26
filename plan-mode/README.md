@@ -19,7 +19,6 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
    - the editor border above and below the prompt turns orange, heavy-weight (theme `mdHeading` role); any installed custom editor (e.g. a theme UI) is wrapped, not replaced
    - with [pi-zentui](https://github.com/lmilojevicc/pi-zentui), set its editor border color mode to **adaptive** (`/zentui` → editor → Editor border color): the frame then follows the dynamic border - zen's usual `borderMuted` gray while idle, orange heavy-weight while planning
    - the agent asks clarifying questions via the `questionnaire` tool
-   - for uncertain scope, the agent can launch up to 3 read-only explore children in parallel via the one allowlisted `pi --print` command
 4. When the plan is decision-ready, the agent calls `plan_complete` with the plan as free-flow markdown — numbered phase headings in broad strokes, ending with a testing and verification phase. Invalid formats are rejected with a corrective error so the agent resubmits; only a valid plan is displayed.
 5. Choose what happens next:
    - **Execute in fresh session (recommended)** — starts a new session whose kickoff prompt embeds the plan; the planning transcript stays behind in the parent session

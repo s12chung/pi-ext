@@ -40,23 +40,6 @@ test("tool sets stay duplicate-free across repeated toggles", () => {
 	assert.equal(new Set(restored).size, restored.length);
 });
 
-// The one canonical explore child the plan-mode prompt teaches; only this
-// pi shape passes the allowlist
-const EXPLORE_CHILD =
-	'pi --print --no-extensions --no-session --tools read,grep,find,ls "trace config loading - report findings"';
-
-test("unsafeCommandReason allows the canonical read-only explore child", () => {
-	assert.equal(unsafeCommandReason(EXPLORE_CHILD), undefined);
-});
-
-test("unsafeCommandReason blocks pi children without the read-only shape", () => {
-	assert.equal(unsafeCommandReason('pi -p "explore"'), "no safe allowlist pattern matched");
-	assert.equal(
-		unsafeCommandReason('pi --print --no-extensions --no-session --tools edit,write "x"'),
-		"no safe allowlist pattern matched",
-	);
-});
-
 test("unsafeCommandReason reports destructive or unmatched commands", () => {
 	assert.match(unsafeCommandReason("rm -rf /") ?? "", /destructive pattern/);
 	assert.equal(unsafeCommandReason("python3 script.py"), "no safe allowlist pattern matched");

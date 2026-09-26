@@ -232,9 +232,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					// Initial understanding, plan format, read-only override, and
 					// question-or-submit ending adapted from opencode's plan-mode prompt
 					// (Phases 1, 4-5), its plan.txt (tradeoffs questioning, read-only
-					// override), and its tool/plan-exit.txt (tool gating). Explore subagents
-					// adapted to read-only pi child processes spawned via bash (the one
-					// allowlisted pi command):
+					// override), and its tool/plan-exit.txt (tool gating):
 					// https://github.com/sst/opencode/blob/main/packages/opencode/src/session/prompt/plan-mode.txt
 					content: `[PLAN MODE ACTIVE]
 The user indicated that they do not want you to execute yet -- you MUST NOT
@@ -248,12 +246,7 @@ Restrictions:
 - Bash is restricted to an allowlist of read-only commands
 
 1. Focus on understanding the user's request and the code associated with their request
-2. For uncertain scope, launch up to 3 read-only explore children in parallel,
-   one bash call each in a single message, exactly this command with your
-   focus quoted:
-   pi --print --no-extensions --no-session --tools read,grep,find,ls "<focus> - report findings"
-   Quality over quantity - use the fewest children that cover the scope
-3. Use the questionnaire tool to clarify ambiguities in the user request up
+2. Use the questionnaire tool to clarify ambiguities in the user request up
    front, and ask for their opinion when weighing tradeoffs - don't make
    large assumptions about user intent
 
