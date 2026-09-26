@@ -5,8 +5,9 @@
  * Multiple questions: tab bar navigation between questions
  */
 
-// Source (copied verbatim; bundled so the plan-mode prompt's questionnaire
-// references resolve without a separate install):
+// Source (copied verbatim from upstream, minus `value` on options/answers —
+// label doubles as the value — and with question label required; bundled so the
+// plan-mode prompt's questionnaire references resolve without a separate install):
 // https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/questionnaire.ts
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -23,7 +24,6 @@ import { Type } from "typebox";
 
 // Types
 interface QuestionOption {
-	value: string;
 	label: string;
 	description?: string;
 }
@@ -40,7 +40,6 @@ interface Question {
 
 interface Answer {
 	id: string;
-	value: string;
 	label: string;
 	wasCustom: boolean;
 	index?: number;
@@ -54,18 +53,13 @@ interface QuestionnaireResult {
 
 // Schema
 const QuestionOptionSchema = Type.Object({
-	value: Type.String({ description: "The value returned when selected" }),
-	label: Type.String({ description: "Display label for the option" }),
+	label: Type.String({ description: "Display label and returned value for the option" }),
 	description: Type.Optional(Type.String({ description: "Optional description shown below label" })),
 });
 
 const QuestionSchema = Type.Object({
 	id: Type.String({ description: "Unique identifier for this question" }),
-	label: Type.Optional(
-		Type.String({
-			description: "Short contextual label for tab bar, e.g. 'Scope', 'Priority' (defaults to Q1, Q2)",
-		}),
-	),
+	label: Type.String({ description: "Short contextual label for tab bar, e.g. 'Scope', 'Priority'" }),
 	prompt: Type.String({ description: "The full question text to display" }),
 	options: Type.Array(QuestionOptionSchema, { description: "Available options to choose from" }),
 	allowOther: Type.Optional(Type.Boolean({ description: "Allow 'Type something' option (default: true)" })),
@@ -102,9 +96,8 @@ export default function questionnaire(pi: ExtensionAPI) {
 			}
 
 			// Normalize questions with defaults
-			const questions: Question[] = params.questions.map((q, i) => ({
+			const questions: Question[] = params.questions.map((q) => ({
 				...q,
-				label: q.label || `Q${i + 1}`,
 				allowOther: q.allowOther !== false,
 			}));
 
@@ -152,7 +145,7 @@ export default function questionnaire(pi: ExtensionAPI) {
 					if (!q) return [];
 					const opts: RenderOption[] = [...q.options];
 					if (q.allowOther) {
-						opts.push({ value: "__other__", label: "Type something.", isOther: true });
+						opts.push({ label: "Type something.", isOther: true });
 					}
 					return opts;
 				}
@@ -175,15 +168,15 @@ export default function questionnaire(pi: ExtensionAPI) {
 					refresh();
 				}
 
-				function saveAnswer(questionId: string, value: string, label: string, wasCustom: boolean, index?: number) {
-					answers.set(questionId, { id: questionId, value, label, wasCustom, index });
+				function saveAnswer(questionId: string, label: string, wasCustom: boolean, index?: number) {
+					answers.set(questionId, { id: questionId, label, wasCustom, index });
 				}
 
 				// Editor submit callback
 				editor.onSubmit = (value) => {
 					if (!inputQuestionId) return;
 					const trimmed = value.trim() || "(no response)";
-					saveAnswer(inputQuestionId, trimmed, trimmed, true);
+					saveAnswer(inputQuestionId, trimmed, true);
 					inputMode = false;
 					inputQuestionId = null;
 					editor.setText("");
@@ -256,7 +249,7 @@ export default function questionnaire(pi: ExtensionAPI) {
 							refresh();
 							return;
 						}
-						saveAnswer(q.id, opt.value, opt.label, false, optionIndex + 1);
+						saveAnswer(q.id, opt.label, false, optionIndex + 1);
 						advanceAfterAnswer();
 						return;
 					}
