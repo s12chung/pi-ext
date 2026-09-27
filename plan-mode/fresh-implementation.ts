@@ -4,159 +4,104 @@
  * parent session.
  */
 
-import { stripVTControlCharacters } from "node:util"
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import { bestEffort, safeErrorDetail } from "./helpers.ts"
 import { DefaultMode } from "./mode.ts"
 
-type NewSessionOptions = Exclude<Parameters<ExtensionCommandContext["newSession"]>[0], undefined>
+type NewSessionOptions = NonNullable<Parameters<ExtensionCommandContext["newSession"]>[0]>
+// pi exports ExtensionCommandContext but not the replacement callback's context
 type ReplacementContext = Parameters<NonNullable<NewSessionOptions["withSession"]>>[0]
-type SetupSessionManager = Parameters<NonNullable<NewSessionOptions["setup"]>>[0]
-
-// Source (adapted: model preflight, retention, and runtime selection dropped):
-// https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts
-export function isCommandContext(ctx: ExtensionContext): ctx is ExtensionCommandContext {
-  return typeof (ctx as Partial<ExtensionCommandContext>).newSession === "function"
-}
 
 // Kickoff text: narumiruna's formatTransferredPlanPrompt body with bacnh85's
-// fresh-session prefix
+// fresh-session prefix; the plan is appended after a blank line
 // https://github.com/bacnh85/pi-extensions/blob/main/pi-plan/extensions/index.ts (buildExecutionPrompt)
-export function formatTransferredPlanPrompt(plan: string): string {
-  return `This is a fresh session created from an approved plan. A previous agent produced the markdown plan below to accomplish the user's task. Implement the plan in this fresh context. Treat the plan as the source of user intent, re-read files as needed, and carry the work through implementation and verification.\n\n${plan}`
-}
+const HANDOFF_PREFIX = `This is a fresh session created from an approved plan. A previous agent produced the markdown plan below to accomplish the user's task. Implement the plan in this fresh context. Treat the plan as the source of user intent, re-read files as needed, and carry the work through implementation and verification.\n\n`
 
-export type FreshImplementationResult =
-  | { kind: "started" }
-  | { kind: "cancelled" }
-  | { kind: "partial" }
-  | { kind: "rejected" }
+// Shown when the kickoff landed and the fresh session's first turn is running
+const KICKOFF_STARTED_NOTICE =
+  "Fresh implementation session started. Only the approved plan was transferred."
 
-export interface FreshImplementationOptions {
-  plan: string
-}
-
-// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationSession)
+// Source (adapted: model preflight, retention, and runtime selection dropped):
+// https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationSession)
 export async function startFreshImplementation(
   ctx: ExtensionCommandContext,
-  options: FreshImplementationOptions,
-): Promise<FreshImplementationResult> {
+  plan: string,
+): Promise<void> {
   await ctx.waitForIdle()
 
-  const handoff = formatTransferredPlanPrompt(options.plan)
-  const parentSession = ctx.sessionManager.getSessionFile()
+  // setup must not throw - pi skips withSession when it does, stranding the
+  // fresh session with no kickoff and only a stale ctx to report through
   let setupError: string | undefined
 
-  // The plan rides DefaultMode's activePlan, like activeImplementation in
-  // narumiruna's destinationState, so restoreMode reads it. The new
-  // session's session_start fires before setup appends the entry, so its
-  // state is refreshed again before the first agent start instead.
-  let result: Awaited<ReturnType<ExtensionCommandContext["newSession"]>>
   try {
-    result = await ctx.newSession({
-      ...(parentSession ? { parentSession } : {}),
-      setup: (sessionManager) =>
-        appendPlanEntry(sessionManager, options.plan, (detail) => (setupError = detail)),
-      withSession: (replacementCtx) => kickoffReplacement(replacementCtx, handoff, setupError),
+    const { cancelled } = await ctx.newSession({
+      parentSession: ctx.sessionManager.getSessionFile(),
+      // The plan entry needs setup's writable SessionManager (the replacement
+      // ctx's is read-only). session_start restores state before setup runs,
+      // so the entry is invisible to that restore; the kickoff's agent start
+      // re-decodes it instead (index.ts's refreshStateForFirstPrompt)
+      setup: (sessionManager) => {
+        try {
+          // The plan rides DefaultMode's activePlan (like activeImplementation
+          // in narumiruna's destinationState) so resuming this session decodes it.
+          sessionManager.appendCustomEntry("plan-mode", new DefaultMode(plan).toState())
+        } catch (error: unknown) {
+          setupError = safeErrorDetail(error)
+        }
+        return Promise.resolve()
+      },
+      withSession: (replacementCtx) => kickoffReplacement(replacementCtx, plan, setupError),
     })
+    if (cancelled) {
+      bestEffort(() =>
+        ctx.ui.notify("Fresh implementation cancelled. The plan remains available.", "info"),
+      )
+    }
   } catch (error: unknown) {
-    safeNotify(
-      ctx,
-      `Unable to start a fresh implementation session: ${safeErrorDetail(error)}. The plan remains available; retry or resume the planning session.`,
-      "error",
+    // ctx may already be stale: the replacement applies before withSession runs
+    bestEffort(() =>
+      ctx.ui.notify(
+        `Unable to start a fresh implementation session: ${safeErrorDetail(error)}. The plan remains available; retry or resume the planning session.`,
+        "error",
+      ),
     )
-    return { kind: "rejected" }
   }
-
-  if (result.cancelled) {
-    safeNotify(ctx, "Fresh implementation cancelled. The plan remains available.", "info")
-    return { kind: "cancelled" }
-  }
-  return setupError ? { kind: "partial" } : { kind: "started" }
 }
 
-// pi awaits the returned promise before starting the replacement session; a
-// failed entry append is reported back instead of thrown into pi's setup path
-function appendPlanEntry(
-  sessionManager: SetupSessionManager,
-  plan: string,
-  onSetupError: (detail: string) => void,
-): Promise<void> {
-  try {
-    sessionManager.appendCustomEntry("plan-mode", new DefaultMode(plan).toState())
-  } catch (error: unknown) {
-    onSetupError(safeErrorDetail(error))
-  }
-  return Promise.resolve()
-}
-
-// Deliver the kickoff, or recover the handed-off plan into the editor when the
-// setup entry or the first message failed
+// The withSession callback, running on the live replacement context. pi
+// awaits it before reporting the handoff, so a failed kickoff recovers into
+// the editor instead of throwing into the replacement path.
 async function kickoffReplacement(
   ctx: ReplacementContext,
-  handoff: string,
+  plan: string,
   setupError: string | undefined,
 ): Promise<void> {
-  if (setupError) {
-    recoverSetupFailure(ctx, handoff, setupError)
-    return
-  }
+  const handoff = `${HANDOFF_PREFIX}${plan}`
   try {
+    // a setup failure joins the catch below as a synthetic error
+    if (setupError) throw new Error(`the plan could not be saved (${setupError})`)
     await ctx.sendUserMessage(handoff)
   } catch (error: unknown) {
-    reportKickoffFailure(ctx, handoff, safeErrorDetail(error))
+    // The fresh session exists but implementation never started - hand the
+    // plan back through the editor rather than losing it
+    const detail = safeErrorDetail(error)
+    const recoveredInEditor = bestEffort(() => ctx.ui.setEditorText(handoff))
+    bestEffort(() =>
+      ctx.ui.notify(
+        recoveredInEditor
+          ? `Fresh session created, but implementation did not start: ${detail}. The implementation request is in the editor; submit it or resume the parent planning session.`
+          : `Fresh session created, but implementation did not start: ${detail}. The implementation request could not be restored to the editor; resume the parent planning session.`,
+        "error",
+      ),
+    )
     return
   }
-  safeNotify(
-    ctx,
-    "Fresh implementation session started. Only the approved plan was transferred.",
-    "info",
-  )
+  bestEffort(() => ctx.ui.notify(KICKOFF_STARTED_NOTICE, "info"))
 }
 
-// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (recoverSetupFailure/reportKickoffFailure, conversation-history variant)
-function recoverSetupFailure(ctx: ReplacementContext, handoff: string, setupError: string): void {
-  const recoveredInEditor = safeSetEditorText(ctx, handoff)
-  safeNotify(
-    ctx,
-    recoveredInEditor
-      ? `Fresh session created, but the plan could not be saved: ${setupError}. The implementation request is in the editor; submit it to continue or resume the parent planning session.`
-      : `Fresh session created, but the plan could not be saved: ${setupError}. The implementation request could not be restored to the editor; resume the parent planning session.`,
-    "error",
-  )
-}
-
-function reportKickoffFailure(ctx: ReplacementContext, handoff: string, detail: string): void {
-  const recoveredInEditor = safeSetEditorText(ctx, handoff)
-  safeNotify(
-    ctx,
-    recoveredInEditor
-      ? `Fresh session created, but implementation did not start: ${detail}. The implementation request is in the editor; submit it or resume the parent planning session.`
-      : `Fresh session created, but implementation did not start: ${detail}. The implementation request could not be restored to the editor; resume the parent planning session.`,
-    "error",
-  )
-}
-
-function safeSetEditorText(ctx: Pick<ExtensionContext, "ui">, text: string): boolean {
-  try {
-    ctx.ui.setEditorText(text)
-    return true
-  } catch {
-    // A replacement context can become stale while Pi reports a partial handoff.
-    return false
-  }
-}
-
-// A source context can go stale while the session is being replaced
-function safeNotify(
-  ctx: Pick<ExtensionContext, "ui">,
-  message: string,
-  level: "info" | "warning" | "error",
-): void {
-  try {
-    ctx.ui.notify(message, level)
-  } catch {
-    // context already replaced
-  }
+// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts
+export function isCommandContext(ctx: ExtensionContext): ctx is ExtensionCommandContext {
+  return typeof (ctx as Partial<ExtensionCommandContext>).newSession === "function"
 }
 
 // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/extension-runtime.ts (isStaleExtensionContextError)
@@ -166,25 +111,4 @@ export function isStaleExtensionContextError(error: unknown): boolean {
     (error.message.includes("This extension ctx is stale after session replacement or reload") ||
       error.message.includes("Extension context is no longer active"))
   )
-}
-
-// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (safeErrorDetail)
-function safeErrorDetail(error: unknown): string {
-  const detail = error instanceof Error ? error.message : String(error)
-  const normalized =
-    [...stripVTControlCharacters(detail)]
-      .map((character) => {
-        const codePoint = character.codePointAt(0) ?? 0
-        return codePoint <= 0x1f ||
-          (codePoint >= 0x7f && codePoint <= 0x9f) ||
-          (codePoint >= 0x202a && codePoint <= 0x202e) ||
-          (codePoint >= 0x2066 && codePoint <= 0x2069)
-          ? " "
-          : character
-      })
-      .join("")
-      .replaceAll(/\s+/gu, " ")
-      .trim() || "unknown error"
-  const characters = [...normalized]
-  return characters.length > 500 ? `${characters.slice(0, 499).join("")}…` : normalized
 }

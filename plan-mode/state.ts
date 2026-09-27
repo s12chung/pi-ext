@@ -150,7 +150,7 @@ async function startFreshHandoff(
   }
   pi.appendEntry("plan-mode", current.toState())
   // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationSession)
-  await startFreshImplementation(freshContext, { plan: menuPlan })
+  await startFreshImplementation(freshContext, menuPlan)
 }
 
 // Present the approval menu from an event context: resolve the fresh-session

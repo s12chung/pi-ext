@@ -171,8 +171,8 @@ function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState
     debugLog("session_start", { reason: event.reason })
     state.latestCommandContext = undefined
     state.modeSlot.rev += 1
-    // A fresh session receives its setup entries (the handed-off plan) only
-    // after session_start, so the restore below misses them
+    // A fresh session receives its handed-off plan entry via newSession's
+    // setup callback, after session_start, so the restore below misses it
     // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (refreshStateBeforeFirstAgentStart)
     state.refreshStateBeforeFirstAgentStart = event.reason === "new"
     state.modeSlot.mode = restoreMode(decodeSession(ctx.sessionManager.getEntries()))
@@ -180,8 +180,8 @@ function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState
   })
 }
 
-// Picks up the handed-off plan that setup appended after the fresh session's
-// session_start had already restored state
+// Picks up the handed-off plan that newSession's setup appended after the
+// fresh session's session_start had already restored state
 // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (refreshStateForFirstPrompt)
 function refreshStateForFirstPrompt(state: PlanModeExtensionState, ctx: ExtensionContext): void {
   if (!state.refreshStateBeforeFirstAgentStart) return
