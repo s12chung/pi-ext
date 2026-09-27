@@ -27,8 +27,8 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 
 ## Commands
 
-| Command | Action |
-|---|---|
+| Command | Action                                                              |
+| ------- | ------------------------------------------------------------------- |
 | `/plan` | Toggle plan mode; with a completed plan, reopen the approval picker |
 
 ## Persistence and recovery

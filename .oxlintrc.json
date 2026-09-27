@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "promise"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error",
+    "pedantic": "error"
+  },
+  "rules": {
+    "typescript/explicit-function-return-type": "error",
+    "typescript/explicit-module-boundary-types": "error",
+    "typescript/explicit-member-accessibility": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/consistent-type-imports": "error",
+
+    // Members within a statement; oxfmt's sortImports owns statement order (it can't sort members)
+    "sort-imports": ["error", { "ignoreDeclarationSort": true }],
+
+    // Function and class declarations hoist; flagging them forces risky reorders, not
+    // safer code (DefaultMode/PlanningMode and the phase classes mutually reference)
+    "no-use-before-define": ["error", { "functions": false, "classes": false }],
+
+    // Sometimes we want more classes
+    "max-classes-per-file": ["error", { "max": 3 }],
+
+    // Not typing; their "fix" deletes intent-carrying TODO/inline comments
+    "no-warning-comments": "off",
+    "no-inline-comments": "off",
+
+    // Unsafe autofix: React 19's useRef requires the `undefined` init arg; the rule's "fix" strips it and breaks types
+    "unicorn/no-useless-undefined": "off",
+
+    // Its fix swaps FileReader for Blob#arrayBuffer(), altering the error-rejection type
+    "unicorn/prefer-blob-reading-methods": "off",
+
+    // A voided promise's then() is fire-and-forget; a side-effect callback need not return
+    "promise/always-return": "off",
+
+    // Restriction (cherry-picked; the full category is mutually-exclusive opinions)
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "unicorn/no-null": "error"
+  }
+}
