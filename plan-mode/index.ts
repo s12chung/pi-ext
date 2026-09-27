@@ -6,7 +6,7 @@
  *
  * Features:
  * - /plan command to toggle
- * - Bash restricted to allowlisted read-only commands
+ * - Bash kept read-only through the plan-mode prompt (soft enforcement)
  * - Plan-only tools (questionnaire, plan_complete) active only while planning
  * - Plan submitted via plan_complete as free-flow markdown (format-validated)
  * - Plan stored in session memory (appendEntry) - no files, no drift
@@ -29,8 +29,6 @@ import type {
   ExtensionContext,
   RegisteredCommand,
   SessionStartEvent,
-  ToolCallEvent,
-  ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent"
 import { DefaultMode, completionTool } from "./mode.ts"
 import { decodeSession } from "./session/decode.ts"
@@ -98,15 +96,6 @@ function planCommand(
 }
 
 function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionState): void {
-  // pi's CustomToolCallEvent types custom-tool inputs as Record<string, unknown>
-  // and its broad toolName survives the bash check in the union, so the
-  // command is vetted rather than cast
-  pi.on("tool_call", (event: ToolCallEvent): ToolCallEventResult | undefined => {
-    if (event.toolName !== "bash") return
-    const { command } = event.input
-    return typeof command === "string" ? state.modeSlot.mode.bashBlockReason(command) : undefined
-  })
-
   pi.on("context", (event: ContextEvent): ContextEventResult => ({
     messages: state.modeSlot.mode.filterContext(event.messages),
   }))

@@ -8,13 +8,12 @@ import type {
   BeforeAgentStartEventResult,
   ExtensionAPI,
   ExtensionContext,
-  ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent"
 import type { PlanModeState } from "./session/state.ts"
 import { type PlanCompletionParams } from "./tools/completion.ts"
 import { normalizePlanCompletion } from "./tools/plan.ts"
 import { ensureBorderTint, setPlanBorderActive } from "./ui/border-tint.ts"
-import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils/tool-set.ts"
+import { getNormalModeTools, getPlanModeTools } from "./utils/tool-set.ts"
 
 // The tool definition lives with the tool whose execution advances the phases
 // (tools/completion.ts); re-exported so index.ts wires modes without importing
@@ -22,21 +21,17 @@ import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./uti
 export { completionTool } from "./tools/completion.ts"
 
 // The [PLAN MODE ACTIVE] prompt injected before every planning agent start.
-// Initial understanding, plan format, read-only override, and
-// question-or-submit ending adapted from opencode's plan-mode prompt
-// (Phases 1, 4-5), its plan.txt (tradeoffs questioning, read-only
-// override), and its tool/plan-exit.txt (tool gating):
-// https://github.com/sst/opencode/blob/main/packages/opencode/src/session/prompt/plan-mode.txt
+// Opening, read-only constraint, tradeoffs questioning, and question-or-submit
+// ending adapted from opencode's plan-mode.txt and plan.txt - like opencode,
+// read-only bash is soft-enforced: this prompt is the only guard.
+// https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/prompt/plan-mode.txt
 const PLAN_MODE_PROMPT = `[PLAN MODE ACTIVE]
 The user indicated that they do not want you to execute yet -- you MUST NOT
 make any edits, run any non-readonly tools (including changing configs or
 making commits), or otherwise make any changes to the system. This supersedes
-any other instructions you have received.
-
-Restrictions:
-- Built-in edit and write tools are disabled
-- Other currently active tools remain available
-- Bash is restricted to an allowlist of read-only commands
+any other instructions you have received. The ONLY exception: experiments
+may mutate, but ONLY inside a temporary folder (e.g. under /tmp) - never the
+workspace, and never as part of doing the planned work.
 
 1. Focus on understanding the user's request and the code associated with their request
 2. Use the questionnaire tool to clarify ambiguities in the user request up
@@ -71,9 +66,6 @@ export abstract class Mode {
   public abstract toState(): PlanModeState
 
   public agentStartMessage(): BeforeAgentStartEventResult["message"] {
-    return undefined
-  }
-  public bashBlockReason(_command: string): ToolCallEventResult | undefined {
     return undefined
   }
   public filterContext(messages: AgentMessage[]): AgentMessage[] {
@@ -209,16 +201,6 @@ export class PlanningMode extends Mode {
 
   public agentStartMessage(): BeforeAgentStartEventResult["message"] {
     return { customType: "plan-mode-context", content: PLAN_MODE_PROMPT, display: false }
-  }
-
-  // Block destructive bash commands in plan mode
-  public bashBlockReason(command: string): ToolCallEventResult | undefined {
-    const unsafeReason = unsafeCommandReason(command)
-    if (unsafeReason === undefined) return undefined
-    return {
-      block: true,
-      reason: `Plan mode: command blocked (${unsafeReason}). Use /plan to disable plan mode first.\nCommand: ${command}`,
-    }
   }
 
   // Persist state after every planning turn (the plan itself arrives via the

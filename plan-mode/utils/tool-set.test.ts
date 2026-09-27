@@ -1,11 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import {
-  getNormalModeTools,
-  getPlanModeTools,
-  unsafeCommandReason,
-  withRequiredPlanModeTools,
-} from "./tool-set.ts"
+import { getNormalModeTools, getPlanModeTools, withRequiredPlanModeTools } from "./tool-set.ts"
 
 // pi auto-activates every registerTool() call, so a normal-mode startup set carries
 // plan_complete and the bundled questionnaire tool alongside the ordinary tools
@@ -51,29 +46,4 @@ test("tool sets stay duplicate-free across repeated toggles", () => {
   const restored = getNormalModeTools(getPlanModeTools(STARTUP_TOOLS))
   assert.equal(new Set(planned).size, planned.length)
   assert.equal(new Set(restored).size, restored.length)
-})
-
-test("unsafeCommandReason reports destructive or unmatched commands", () => {
-  assert.match(unsafeCommandReason("rm -rf /") ?? "", /destructive pattern/u)
-  assert.equal(unsafeCommandReason("python3 script.py"), "no safe allowlist pattern matched")
-})
-
-test("unsafeCommandReason allows /dev/null redirect sinks", () => {
-  assert.equal(unsafeCommandReason("grep foo bar 2>/dev/null"), undefined)
-  assert.equal(unsafeCommandReason("grep foo bar 2> /dev/null"), undefined)
-  assert.equal(unsafeCommandReason("grep -rn foo . >/dev/null | head -5"), undefined)
-})
-
-test("unsafeCommandReason still blocks file-writing redirects", () => {
-  assert.match(unsafeCommandReason("echo hi > out.txt") ?? "", /destructive pattern/u)
-  assert.match(unsafeCommandReason("grep foo bar > /dev/null.txt") ?? "", /destructive pattern/u)
-})
-
-test("unsafeCommandReason allows read-only go commands", () => {
-  assert.equal(unsafeCommandReason("go doc os.ReadFile"), undefined)
-  assert.equal(unsafeCommandReason("go env GOPATH"), undefined)
-  assert.equal(
-    unsafeCommandReason("go env -w GOFLAGS=-mod=mod"),
-    "no safe allowlist pattern matched",
-  )
 })

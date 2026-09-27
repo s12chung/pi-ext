@@ -58,21 +58,18 @@ test("DefaultMode refuses plan_complete and stays permissive", () => {
     /only available while plan mode is active/u,
   )
   assert.equal(mode.agentStartMessage(), undefined)
-  assert.equal(mode.bashBlockReason("rm -rf /"), undefined)
   assert.equal(mode.shouldPromptApproval(), false)
 })
 
-test("PlanningMode injects the plan-mode prompt and blocks unsafe bash", () => {
+test("PlanningMode injects the plan-mode prompt with the read-only constraint", () => {
   const planning = new PlanningMode()
   const message = planning.agentStartMessage()
   assert.equal(message?.customType, "plan-mode-context")
   assert.equal(message?.display, false)
-  assert.ok(typeof message?.content === "string" && message.content.includes("[PLAN MODE ACTIVE]"))
-
-  const blocked = planning.bashBlockReason("git commit -m x")
-  assert.equal(blocked?.block, true)
-  assert.match(blocked?.reason ?? "", /Plan mode: command blocked \(destructive pattern/u)
-  assert.equal(planning.bashBlockReason("ls -la"), undefined)
+  const content = message?.content
+  assert.ok(typeof content === "string" && content.includes("[PLAN MODE ACTIVE]"))
+  assert.match(content, /MUST NOT/u)
+  assert.match(content, /ONLY inside a temporary folder/u)
 })
 
 test("DefaultMode strips stale planning context; PlanningMode passes it through", () => {
