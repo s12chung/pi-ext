@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { SessionEntry } from "@earendil-works/pi-coding-agent"
-import { decodeSession } from "./decode.ts"
+import type { AgentToolResult, SessionEntry } from "@earendil-works/pi-coding-agent"
+import { decodeSession, toolResultText } from "./decode.ts"
 import { PLAN, entryBase, planCompleteResult, stateEntry } from "./fixtures.ts"
 
 test("decodeSession returns no state without a plan-mode entry", () => {
@@ -107,4 +107,21 @@ test("decodeSession vets toolResult details identity", () => {
     ),
   )
   assert.equal(invalidPlan.completionPlan, undefined)
+})
+
+// Source (adapted: planModeCompletionMarkdown → toolResultText):
+// https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/completion-tool.ts
+test("toolResultText joins text blocks, trims, and skips other block types", () => {
+  const result = {
+    content: [
+      { type: "text", text: "  **Proposed Plan**\n" },
+      { type: "image" },
+      { type: "text", text: "\nbody  " },
+    ],
+  } as unknown as AgentToolResult<never>
+  assert.equal(toolResultText(result), "**Proposed Plan**\n\n\nbody")
+})
+
+test("toolResultText returns empty without text content", () => {
+  assert.equal(toolResultText({ content: [], details: undefined }), "")
 })

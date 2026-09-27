@@ -23,6 +23,7 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui"
 import { Type } from "typebox"
+import { QUESTIONNAIRE_TOOL_NAME } from "./tools.ts"
 
 // Types
 interface QuestionOption {
@@ -89,7 +90,7 @@ function errorResult(
 
 export default function questionnaire(pi: ExtensionAPI): void {
   pi.registerTool({
-    name: "questionnaire",
+    name: QUESTIONNAIRE_TOOL_NAME,
     label: "Questionnaire",
     description:
       "Ask the user one or more questions. Use for clarifying requirements, getting preferences, or confirming decisions. For single questions, shows a simple option list. For multiple questions, shows a tab-based interface.",

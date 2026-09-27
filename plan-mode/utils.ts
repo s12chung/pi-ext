@@ -2,7 +2,7 @@
  * Plan-mode policy: bash allowlist and active-tool-set selection.
  */
 
-import { PLAN_COMPLETE_TOOL_NAME } from "./completion-tool.ts"
+import { PLAN_COMPLETE_TOOL_NAME, QUESTIONNAIRE_TOOL_NAME } from "./tools.ts"
 
 // Destructive commands blocked in plan mode
 const DESTRUCTIVE_PATTERNS = [
@@ -115,7 +115,6 @@ export function unsafeCommandReason(command: string): string | undefined {
 // think it is planning.
 // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/required-tools.ts
 // (REQUIRED_PLAN_MODE_TOOL_NAMES, withRequiredPlanModeTools, withoutRequiredPlanModeTools)
-const QUESTIONNAIRE_TOOL_NAME = "questionnaire"
 
 export const REQUIRED_PLAN_MODE_TOOL_NAMES = [
   QUESTIONNAIRE_TOOL_NAME,

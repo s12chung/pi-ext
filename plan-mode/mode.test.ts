@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { AgentMessage } from "@earendil-works/pi-agent-core"
-import { isApprovePhase } from "./completion-tool.ts"
 import { PLAN } from "./fixtures.ts"
 import { DefaultMode, type Mode, PlanningMode, isDefaultMode, isPlanningMode } from "./mode.ts"
+import { isApprovePhase } from "./phases.ts"
 
 test("toggle round-trips and carries the tool snapshot to default", () => {
   const planning = new DefaultMode().next()
@@ -24,24 +24,23 @@ test("DefaultMode hands its activePlan to a fresh planning mode's discard", () =
   assert.equal(planning.plan, undefined)
 })
 
-test("completePlan validates before advancing explore → approval", async () => {
+test("completePlan validates before advancing explore → approval", () => {
   const planning = new PlanningMode()
-  await assert.rejects(planning.completePlan({ plan: "just prose" }), /phase headings/u)
+  assert.throws(() => planning.completePlan({ plan: "just prose" }), /phase headings/u)
   assert.ok(!isApprovePhase(planning.phase))
   assert.equal(planning.plan, undefined)
 
-  const result = await planning.completePlan({ plan: PLAN })
-  assert.ok(result.terminate)
+  planning.completePlan({ plan: PLAN })
   assert.ok(isApprovePhase(planning.phase))
   assert.equal(planning.plan, PLAN)
   assert.equal(planning.shouldPromptApproval(), true)
 })
 
-test("shouldPromptApproval only in the approval phase", async () => {
+test("shouldPromptApproval only in the approval phase", () => {
   const planning = new PlanningMode()
   assert.equal(planning.shouldPromptApproval(), false)
 
-  await planning.completePlan({ plan: PLAN })
+  planning.completePlan({ plan: PLAN })
   assert.equal(planning.shouldPromptApproval(), true)
 
   // Opening the menu consumes the phase: rejection rests in explore
@@ -50,10 +49,10 @@ test("shouldPromptApproval only in the approval phase", async () => {
   assert.equal(planning.plan, undefined)
 })
 
-test("DefaultMode refuses plan_complete and stays permissive", async () => {
+test("DefaultMode refuses plan_complete and stays permissive", () => {
   const mode: Mode = new DefaultMode()
-  await assert.rejects(
-    mode.completePlan({ plan: PLAN }),
+  assert.throws(
+    () => mode.completePlan({ plan: PLAN }),
     /only available while plan mode is active/u,
   )
   assert.equal(mode.agentStartMessage(), undefined)

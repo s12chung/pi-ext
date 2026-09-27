@@ -3,16 +3,14 @@
  * custom entry data and toolResult details as unknown because they round-trip
  * through JSON on disk, so this module decodes them into the extension's
  * typed shapes. index.ts calls decodeSession and passes the result along;
- * everything downstream is fully typed.
+ * everything downstream is fully typed. Also the home of toolResultText,
+ * the shared reading of a tool result's text.
  */
 
-import type { CustomEntry, SessionEntry } from "@earendil-works/pi-coding-agent"
-import {
-  PLAN_COMPLETE_TOOL_NAME,
-  PLAN_COMPLETE_VERSION,
-  normalizePlanCompletion,
-} from "./completion-tool.ts"
+import type { AgentToolResult, CustomEntry, SessionEntry } from "@earendil-works/pi-coding-agent"
+import { normalizePlanCompletion } from "./plan.ts"
 import type { PlanModeState } from "./state.ts"
+import { PLAN_COMPLETE_TOOL_NAME, PLAN_COMPLETE_VERSION } from "./tools.ts"
 
 export interface DecodedSession {
   // The newest plan-mode state entry, decoded; undefined when none persists
@@ -64,6 +62,21 @@ function decodedStringArray(value: unknown): string[] | undefined {
     value.every((item): item is string => typeof item === "string" && item.trim().length > 0)
     ? value
     : undefined
+}
+
+// Source (adapted: planModeCompletionMarkdown → toolResultText, generic over any
+// result's content rather than a plan completion's):
+// https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/completion-tool.ts
+// Deviates from the source: no planFromCompletionDetails fallback - pi always hands
+// renderResult a populated content (AgentToolResult.content is required; thrown errors become
+// text results), and persisted-plan recovery from details is decodedPlanCompletion below.
+// The joined text of a tool result's text content blocks, trimmed - the
+// renderable transcript of the result
+export function toolResultText<T>(result: AgentToolResult<T>): string {
+  return result.content
+    .flatMap((block) => (block.type === "text" ? [block.text] : []))
+    .join("\n")
+    .trim()
 }
 
 // Recover the plan from the newest plan_complete toolResult after the state

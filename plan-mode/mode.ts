@@ -5,27 +5,21 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core"
 import type {
-  AgentToolResult,
   BeforeAgentStartEventResult,
   ExtensionAPI,
   ExtensionContext,
   ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent"
 import { ensureBorderTint, setPlanBorderActive } from "./border-tint.ts"
-import {
-  ExplorePhase,
-  type PlanCompletionDetails,
-  type PlanCompletionParams,
-  type PlanningPhaseState,
-  isApprovePhase,
-  normalizePlanCompletion,
-  planCompleted,
-} from "./completion-tool.ts"
+import { type PlanCompletionParams } from "./completion-tool.ts"
+import { ExplorePhase, type PlanningPhaseState, isApprovePhase } from "./phases.ts"
+import { normalizePlanCompletion } from "./plan.ts"
 import type { PlanModeState } from "./state.ts"
 import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils.ts"
 
-// Registration lives with the phases it advances (completion-tool.ts);
-// re-exported so index.ts wires modes without importing completion internals
+// Registration lives with the tool whose execution advances the phases
+// (completion-tool.ts); re-exported so index.ts wires modes without importing
+// completion internals
 export { registerCompletionTool } from "./completion-tool.ts"
 
 // The [PLAN MODE ACTIVE] prompt injected before every planning agent start.
@@ -93,10 +87,8 @@ export abstract class Mode {
 
   // Registration is split from the logic (see registerCompletionTool):
   // execute delegates here, and the base refuses outside plan mode
-  public completePlan(
-    _params: PlanCompletionParams,
-  ): Promise<AgentToolResult<PlanCompletionDetails>> {
-    return Promise.reject(new Error("plan_complete is only available while plan mode is active"))
+  public completePlan(_params: PlanCompletionParams): string {
+    throw new Error("plan_complete is only available while plan mode is active")
   }
 }
 
@@ -200,15 +192,13 @@ export class PlanningMode extends Mode {
     }
   }
 
-  // Validate, advance the phase, build the tool result
+  // Validate and advance the phase; registerCompletionTool builds the tool result
   // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (registerTool: plan_mode_complete)
-  public completePlan(
-    params: PlanCompletionParams,
-  ): Promise<AgentToolResult<PlanCompletionDetails>> {
+  public completePlan(params: PlanCompletionParams): string {
     const parsed = normalizePlanCompletion(params.plan)
-    if (!parsed.ok) return Promise.reject(new Error(parsed.error))
+    if (!parsed.ok) throw new Error(parsed.error)
     this.phase = this.phase.submitPlan(parsed.plan)
-    return Promise.resolve(planCompleted(parsed.plan))
+    return parsed.plan
   }
 
   public agentStartMessage(): BeforeAgentStartEventResult["message"] {
