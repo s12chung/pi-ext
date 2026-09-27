@@ -1,18 +1,77 @@
 /**
- * State and label resolution for the starship footer - how raw strings and
- * numbers become display text. Faithful ports of zentui's state/format/icons
- * layers for one fixed setup (segments cwd, sessionName, gitBranch |
- * modelInfo, context, cost); the color specs live in color.ts and the layout
- * and pi wiring live in index.ts.
+ * State and label resolution for the starship footer - the footer's state
+ * shape (FooterSource, collected and decoded from pi by index.ts) and how
+ * each field of it becomes display text: one already-colored part builder per
+ * field (FooterPartBuilders) over the label helpers. Faithful ports of
+ * zentui's state/format/icons layers for one fixed setup (parts cwd,
+ * sessionName, gitBranch | model, thinkingLevel, context, cost); the coloring
+ * lives in ui/color.ts, the layout in ui/render.ts, and the pi wiring in
+ * index.ts.
  */
 
 import { stripVTControlCharacters } from "node:util"
-import { type ContextColorTier, EDITOR_COLORS, type ThemeLike, footerColor } from "./color.ts"
-import type { ContextSnapshot, ModelInfo, ThinkingLevel } from "./decoder.ts"
+import { COLORS, type ThemeLike, colorize, dynaPercentColor } from "./ui/color.ts"
+import type { ContextSnapshot, ModelInfo, ThinkingLevel } from "./utils/decoder.ts"
 
-// zentui's contextThresholds defaults
-const CONTEXT_WARNING_THRESHOLD = 70
-const CONTEXT_ERROR_THRESHOLD = 90
+// Everything the footer renders from, collected per render into one bundle:
+// index.ts reads pi and vets its weakly typed data through utils/decoder.ts
+export interface FooterSource {
+  cwd: string
+  sessionName: string | undefined
+  branch: string | undefined
+  model: ModelInfo
+  contextUsage: ContextSnapshot
+  cost: number
+  thinkingLevel: ThinkingLevel | undefined
+  statuses: ReadonlyMap<string, string>
+}
+
+// One part builder per FooterSource field: each turns the field's vetted data
+// into the already-colored part string(s) it contributes to the row;
+// index.ts's footerParts decides the joining and the order
+type FooterPartBuilders = {
+  cwd(theme: ThemeLike, source: FooterSource): string
+  sessionName(theme: ThemeLike, source: FooterSource): string
+  branch(theme: ThemeLike, source: FooterSource): string
+  model(theme: ThemeLike, source: FooterSource): string
+  thinkingLevel(theme: ThemeLike, source: FooterSource): string
+  contextUsage(theme: ThemeLike, source: FooterSource): string
+  cost(theme: ThemeLike, source: FooterSource): string
+  statuses(theme: ThemeLike, source: FooterSource): string[]
+}
+
+export const footerPartBuilders: FooterPartBuilders = {
+  cwd: (theme, source) => colorize(theme, COLORS.cwd, cwdLabel(source.cwd)),
+  // "in {name}", dropped for a nameless session
+  sessionName: (theme, source) => {
+    const sessionName = sanitizeFooterText(source.sessionName ?? "")
+    if (sessionName === "") return ""
+    return `in ${colorize(theme, COLORS.sessionName, sessionName)}`
+  },
+  // "on {icon} {branch}" with the git glyph sharing the branch color
+  branch: (theme, source) => {
+    const branch = sanitizeFooterText(source.branch ?? "")
+    if (branch === "") return ""
+    return `on ${colorize(theme, COLORS.gitBranch, `${gitGlyph()} ${branch}`.trim())}`
+  },
+  model: (theme, source) => modelInfoSegment(theme, source.model),
+  // The editor's muted, hidden at "off" (zentui renderVariable's thinking =
+  // values.thinking.toLowerCase() === "off" ? "" : ...)
+  thinkingLevel: (theme, source) => {
+    const level = source.thinkingLevel
+    if (level === undefined || level === "off") return ""
+    return colorize(theme, COLORS.thinking, level)
+  },
+  contextUsage: (theme, source) =>
+    colorize(
+      theme,
+      dynaPercentColor(source.contextUsage.percent),
+      contextLabel(source.contextUsage),
+    ),
+  // The session cost, "dimmed cyan"
+  cost: (theme, source) => colorize(theme, COLORS.cost, costLabel(source.cost)),
+  statuses: (theme, source) => statusSegments(theme, source.statuses),
+}
 
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
@@ -41,37 +100,23 @@ export function providerLabel(provider: string | undefined): string {
   )
 }
 
-// The model-info segment, styled like the editor's metadata (zentui
-// editor-metadata-format.ts renderVariable): the model id in the editor's
-// accent, the pretty provider in plain text - dropped when the provider
-// already appears inside the id (zentui composeModelInfoLabel) - and the
-// thinking level beside them in the editor's muted, hidden at "off"
-export function modelInfoSegment(
-  theme: ThemeLike,
-  model: ModelInfo,
-  thinkingLevel: ThinkingLevel | undefined,
-): string {
+// The editor-style model metadata (zentui editor-metadata-format.ts
+// renderVariable): the model id in the editor's accent, the pretty provider
+// in plain text - dropped when the provider already appears inside the id
+// (zentui composeModelInfoLabel)
+export function modelInfoSegment(theme: ThemeLike, model: ModelInfo): string {
   const id = sanitizeFooterText(model.id ?? "") || "no-model"
   const provider = sanitizeFooterText(providerLabel(model.provider))
   const normalizedId = normalizeModelInfoPart(id)
   const normalizedProvider = normalizeModelInfoPart(provider)
   const providerIsDuplicated =
     normalizedProvider.length > 0 && normalizedId.includes(normalizedProvider)
-  const thinking = thinkingLabel(thinkingLevel)
   return [
-    footerColor(theme, EDITOR_COLORS.model, id),
-    providerIsDuplicated ? "" : footerColor(theme, EDITOR_COLORS.provider, provider),
-    thinking === "" ? "" : footerColor(theme, EDITOR_COLORS.thinking, thinking),
+    colorize(theme, COLORS.model, id),
+    providerIsDuplicated ? "" : colorize(theme, COLORS.provider, provider),
   ]
     .filter(Boolean)
     .join(" ")
-}
-
-// The editor hides the thinking label at "off" (zentui renderVariable's
-// thinking = values.thinking.toLowerCase() === "off" ? "" : ...)
-function thinkingLabel(level: ThinkingLevel | undefined): string {
-  if (level === undefined || level === "off") return ""
-  return level
 }
 
 function normalizeModelInfoPart(value: string): string {
@@ -89,13 +134,6 @@ export function contextLabel(context: ContextSnapshot): string {
 function formatContextPercent(percent: number | undefined): string {
   if (percent === undefined || !Number.isFinite(percent)) return "?"
   return `${Math.max(0, Math.min(999, percent)).toFixed(1)}%`
-}
-
-export function contextTier(percent: number | undefined): ContextColorTier {
-  if (percent === undefined || !Number.isFinite(percent)) return "normal"
-  if (percent >= CONTEXT_ERROR_THRESHOLD) return "error"
-  if (percent >= CONTEXT_WARNING_THRESHOLD) return "warning"
-  return "normal"
 }
 
 export function costLabel(cost: number): string {
@@ -131,7 +169,18 @@ export function sanitizeFooterText(text: string): string {
   )
 }
 
-export type IconEnvironment = Readonly<Record<string, string | undefined>>
+// Extension statuses sorted by key, single-line-safe, each in the extension
+// status color; empty texts drop out
+export function statusSegments(theme: ThemeLike, statuses: ReadonlyMap<string, string>): string[] {
+  return [...statuses.entries()]
+    .toSorted(([leftKey], [rightKey]) => (leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0))
+    .flatMap(([, text]) => {
+      const sanitized = sanitizeFooterText(text)
+      return sanitized === "" ? [] : [colorize(theme, COLORS.extensionStatus, sanitized)]
+    })
+}
+
+type IconEnvironment = Readonly<Record<string, string | undefined>>
 
 // zentui's auto icon mode: Nerd glyphs for terminals that signal support,
 // ASCII otherwise, with ZENTUI_NERD_FONTS forcing the choice. Only the git

@@ -2,8 +2,8 @@
  * The session boundary and the only home of `unknown`: pi types the active
  * model as Model<any>, and session entries round-trip through JSON on disk,
  * so their payloads are only as trustworthy as the file they were read from.
- * This module decodes them into the footer's typed shapes; state.ts and
- * index.ts never touch an unvetted value.
+ * This module decodes them into the footer's typed shapes; index.ts does the
+ * decoding, and nothing past it touches an unvetted value.
  */
 
 import type { SessionEntry } from "@earendil-works/pi-coding-agent"

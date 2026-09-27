@@ -1,18 +1,20 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { ThemeLike } from "./color.ts"
-import type { ContextSnapshot, ModelInfo } from "./decoder.ts"
 import {
+  type FooterSource,
   contextLabel,
-  contextTier,
   costLabel,
   cwdLabel,
+  footerPartBuilders,
   formatCount,
   gitGlyph,
   modelInfoSegment,
   providerLabel,
   sanitizeFooterText,
+  statusSegments,
 } from "./state.ts"
+import type { ThemeLike } from "./ui/color.ts"
+import type { ContextSnapshot, ModelInfo } from "./utils/decoder.ts"
 
 // Marker colors are fine here: no width math, just which spec styled what
 const theme: ThemeLike = {
@@ -31,6 +33,18 @@ const MODEL = (id: string | undefined, provider: string | undefined): ModelInfo 
   id,
   provider,
   contextWindow: undefined,
+})
+
+const source = (overrides: Partial<FooterSource> = {}): FooterSource => ({
+  cwd: "/home/user/pi-ext",
+  sessionName: "footer work",
+  branch: "main",
+  model: { id: "sonnet-4-5", provider: "anthropic", contextWindow: 200_000 },
+  contextUsage: { percent: 6.2, contextWindow: 200_000 },
+  cost: 0,
+  thinkingLevel: "off",
+  statuses: new Map<string, string>(),
+  ...overrides,
 })
 
 test("formatCount matches zentui's tiered rounding", () => {
@@ -55,29 +69,50 @@ test("providerLabel pretty-names known providers and title-cases the rest", () =
 
 test("modelInfoSegment wears the editor's colors and dedups the provider", () => {
   assert.equal(
-    modelInfoSegment(theme, MODEL(undefined, undefined), undefined),
+    modelInfoSegment(theme, MODEL(undefined, undefined)),
     "<fg:accent>no-model</fg:accent> <fg:text>Unknown</fg:text>",
   )
   assert.equal(
-    modelInfoSegment(theme, MODEL("sonnet-4-5", "anthropic"), "off"),
+    modelInfoSegment(theme, MODEL("sonnet-4-5", "anthropic")),
     "<fg:accent>sonnet-4-5</fg:accent> <fg:text>Anthropic</fg:text>",
   )
   // "openaigpt5" contains "openai", so the provider is dropped
   assert.equal(
-    modelInfoSegment(theme, MODEL("openai/gpt-5", "openai"), undefined),
+    modelInfoSegment(theme, MODEL("openai/gpt-5", "openai")),
     "<fg:accent>openai/gpt-5</fg:accent>",
   )
 })
 
-test("modelInfoSegment shows the thinking level beside the model, hidden at off", () => {
+test("footerPartBuilders turns each field into its colored part", () => {
+  const { cwd, sessionName, branch, model, thinkingLevel, contextUsage, cost } = footerPartBuilders
+  assert.equal(cwd(theme, source()), "<fg:syntaxFunction>pi-ext</fg:syntaxFunction>")
+  assert.equal(sessionName(theme, source()), "in <fg:success>footer work</fg:success>")
+  assert.equal(sessionName(theme, source({ sessionName: undefined })), "")
+  assert.equal(branch(theme, source()), "on <fg:syntaxKeyword>* main</fg:syntaxKeyword>")
+  assert.equal(branch(theme, source({ branch: undefined })), "")
   assert.equal(
-    modelInfoSegment(theme, MODEL("sonnet-4-5", "anthropic"), "high"),
-    "<fg:accent>sonnet-4-5</fg:accent> <fg:text>Anthropic</fg:text> <fg:muted>high</fg:muted>",
+    model(theme, source()),
+    "<fg:accent>sonnet-4-5</fg:accent> <fg:text>Anthropic</fg:text>",
   )
+  assert.equal(thinkingLevel(theme, source()), "")
+  assert.equal(thinkingLevel(theme, source({ thinkingLevel: "high" })), "<fg:muted>high</fg:muted>")
+  assert.equal(contextUsage(theme, source()), "<fg:muted>6.2%/200k</fg:muted>")
   assert.equal(
-    modelInfoSegment(theme, MODEL("sonnet-4-5", undefined), "xhigh"),
-    "<fg:accent>sonnet-4-5</fg:accent> <fg:text>Unknown</fg:text> <fg:muted>xhigh</fg:muted>",
+    contextUsage(theme, source({ contextUsage: { percent: 95, contextWindow: 200_000 } })),
+    "<fg:error>95.0%/200k</fg:error>",
   )
+  assert.equal(cost(theme, source()), "<fg:syntaxFunction>$0.000</fg:syntaxFunction>")
+})
+
+test("footerPartBuilders sorts, sanitizes, and drops empty statuses", () => {
+  const statuses = statusSegments(
+    theme,
+    new Map([
+      ["plan-mode", "\u001B[31m⏸ plan\u001B[0m"],
+      ["lint", ""],
+    ]),
+  )
+  assert.deepEqual(statuses, ["<fg:mdHeading>⏸ plan</fg:mdHeading>"])
 })
 
 test("contextLabel renders --, ?, and clamped percentages", () => {
@@ -86,14 +121,6 @@ test("contextLabel renders --, ?, and clamped percentages", () => {
   assert.equal(contextLabel(CONTEXT(undefined, 200_000)), "?/200k")
   assert.equal(contextLabel(CONTEXT(12.34, 200_000)), "12.3%/200k")
   assert.equal(contextLabel(CONTEXT(1234, 200_000)), "999.0%/200k")
-})
-
-test("contextTier applies zentui's 70/90 thresholds", () => {
-  assert.equal(contextTier(undefined), "normal")
-  assert.equal(contextTier(69.9), "normal")
-  assert.equal(contextTier(70), "warning")
-  assert.equal(contextTier(89.9), "warning")
-  assert.equal(contextTier(90), "error")
 })
 
 test("costLabel renders dollars to three decimals", () => {

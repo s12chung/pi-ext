@@ -4,5 +4,5 @@
     "rootDir": ".",
     "lib": ["ES2023"]
   },
-  "include": ["*.ts"]
+  "include": ["**/*.ts"]
 }
