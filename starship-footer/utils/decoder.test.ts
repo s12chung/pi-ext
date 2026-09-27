@@ -98,20 +98,29 @@ test("decodeSessionCost caps instead of overflowing to Infinity", () => {
 })
 
 test("decodeContextSnapshot keeps finite percentages and merges windows with ?? semantics", () => {
-  assert.deepEqual(decodeContextSnapshot({ percent: 12.5, contextWindow: 100_000 }, 200_000), {
-    percent: 12.5,
-    contextWindow: 200_000,
-  })
-  assert.deepEqual(decodeContextSnapshot({ percent: 12.5, contextWindow: 100_000 }, undefined), {
-    percent: 12.5,
-    contextWindow: 100_000,
-  })
+  assert.deepEqual(
+    decodeContextSnapshot({ tokens: 25_000, percent: 12.5, contextWindow: 100_000 }, 200_000),
+    {
+      percent: 12.5,
+      contextWindow: 200_000,
+    },
+  )
+  assert.deepEqual(
+    decodeContextSnapshot({ tokens: 25_000, percent: 12.5, contextWindow: 100_000 }, undefined),
+    {
+      percent: 12.5,
+      contextWindow: 100_000,
+    },
+  )
   // A zero model window wins over the session estimate, matching zentui's ??
-  // oxlint-disable-next-line unicorn/no-null -- pi reports ContextUsage.percent as null, not undefined
-  assert.deepEqual(decodeContextSnapshot({ percent: null, contextWindow: 100_000 }, 0), {
-    percent: undefined,
-    contextWindow: 0,
-  })
+  assert.deepEqual(
+    // oxlint-disable-next-line unicorn/no-null -- pi reports ContextUsage as null, not undefined
+    decodeContextSnapshot({ tokens: null, percent: null, contextWindow: 100_000 }, 0),
+    {
+      percent: undefined,
+      contextWindow: 0,
+    },
+  )
 })
 
 test("decodeThinkingLevel accepts only pi's levels", () => {
@@ -124,12 +133,9 @@ test("decodeThinkingLevel accepts only pi's levels", () => {
   assert.equal(decodeThinkingLevel(7), undefined)
 })
 
-test("decodeContextSnapshot drops unknown or malformed usage", () => {
-  const unknown = { percent: undefined, contextWindow: undefined }
-  assert.deepEqual(decodeContextSnapshot(undefined, undefined), unknown)
-  assert.deepEqual(decodeContextSnapshot("usage", undefined), unknown)
-  assert.deepEqual(
-    decodeContextSnapshot({ percent: "high", contextWindow: "big" }, undefined),
-    unknown,
-  )
+test("decodeContextSnapshot maps absent usage to undefined", () => {
+  assert.deepEqual(decodeContextSnapshot(undefined, undefined), {
+    percent: undefined,
+    contextWindow: undefined,
+  })
 })

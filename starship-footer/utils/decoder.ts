@@ -6,7 +6,7 @@
  * decoding, and nothing past it touches an unvetted value.
  */
 
-import type { SessionEntry } from "@earendil-works/pi-coding-agent"
+import type { ContextUsage, SessionEntry } from "@earendil-works/pi-coding-agent"
 
 export interface ModelInfo {
   // The model id, or undefined when no model is active
@@ -56,15 +56,19 @@ export function decodeSessionCost(entries: readonly SessionEntry[]): number {
   return cost
 }
 
-// The model's window wins over the session estimate (zentui resolveContextUsage's ?? merge)
+// pi's live context usage is typed (ContextUsage), not disk-round-tripped, so
+// only the percent-null case needs decoding here. The model's window wins over
+// the session estimate (zentui resolveContextUsage's ?? merge)
 export function decodeContextSnapshot(
-  usage: unknown,
+  usage: ContextUsage | undefined,
   modelContextWindow: number | undefined,
 ): ContextSnapshot {
-  const record = isRecord(usage) ? usage : undefined
   return {
-    percent: decodedPercent(record),
-    contextWindow: modelContextWindow ?? decodedCount(record?.contextWindow),
+    percent:
+      usage !== undefined && usage.percent !== null && Number.isFinite(usage.percent)
+        ? usage.percent
+        : undefined,
+    contextWindow: modelContextWindow ?? usage?.contextWindow,
   }
 }
 
@@ -72,12 +76,6 @@ export function decodeThinkingLevel(value: unknown): ThinkingLevel | undefined {
   return (["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const).find(
     (level) => level === value,
   )
-}
-
-function decodedPercent(record: Record<string, unknown> | undefined): number | undefined {
-  if (record === undefined) return undefined
-  if (typeof record.percent !== "number" || !Number.isFinite(record.percent)) return undefined
-  return record.percent
 }
 
 function usageCost(usage: unknown): number {
