@@ -3,12 +3,7 @@
  * toggle; each mode owns its tool set, UI, and event behavior.
  */
 
-import type { AgentMessage } from "@earendil-works/pi-agent-core"
-import type {
-  BeforeAgentStartEventResult,
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent"
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 import type { PlanModeState } from "./session/state.ts"
 import { type PlanCompletionParams } from "./tools/completion.ts"
 import { normalizePlanCompletion } from "./tools/plan.ts"
@@ -20,7 +15,10 @@ import { getNormalModeTools, getPlanModeTools } from "./utils/tool-set.ts"
 // completion internals
 export { completionTool } from "./tools/completion.ts"
 
-// The [PLAN MODE ACTIVE] prompt injected before every planning agent start.
+// The [PLAN MODE ACTIVE] prompt PlanningMode returns for its system-prompt
+// section (index.ts owns the "plan-mode" key) - opencode placement: mode
+// instructions ride the system prompt (persistent across turns, diffed in/out
+// by pi on toggle) instead of per-run messages that accumulate one per prompt.
 // Opening, read-only constraint, tradeoffs questioning, and question-or-submit
 // ending adapted from opencode's plan-mode.txt and plan.txt - like opencode,
 // read-only bash is soft-enforced: this prompt is the only guard.
@@ -65,11 +63,9 @@ export abstract class Mode {
   /** Persisted shape; state.ts reconstructs the objects from it */
   public abstract toState(): PlanModeState
 
-  public agentStartMessage(): BeforeAgentStartEventResult["message"] {
-    return undefined
-  }
-  public filterContext(messages: AgentMessage[]): AgentMessage[] {
-    return messages
+  /** This mode's system-prompt section content; empty string contributes no section. */
+  public systemPrompt(): string {
+    return ""
   }
   public onAgentEnd(_pi: ExtensionAPI): void {}
   public shouldPromptApproval(): boolean {
@@ -130,31 +126,6 @@ export class DefaultMode extends Mode {
       toolsBeforePlanMode: this.toolsBeforePlanMode,
     }
   }
-
-  // Filter out stale plan mode context when not in plan mode
-  public filterContext(messages: AgentMessage[]): AgentMessage[] {
-    // Request-time projection over a structuredClone (pi's emitContext): session
-    // entries are never edited, so re-entering planning re-includes these.
-    //
-    // Prefix-cache note: dropping mid-history messages invalidates the provider's
-    // cached prefix from the first removal onward - but the mode toggle already
-    // swapped the active tool set, which is part of the cached prefix, forcing
-    // that miss regardless; and the filter is deterministic, so the first DEFAULT
-    // request re-caches the filtered prefix and later turns extend it again.
-    return messages.filter((m) => {
-      if (m.role === "custom" && m.customType === "plan-mode-context") return false
-      if (m.role !== "user") return true
-
-      const content = m.content
-      if (typeof content === "string") {
-        return !content.includes("[PLAN MODE ACTIVE]")
-      }
-      if (Array.isArray(content)) {
-        return !content.some((c) => c.type === "text" && c.text.includes("[PLAN MODE ACTIVE]"))
-      }
-      return true
-    })
-  }
 }
 
 export class PlanningMode extends Mode {
@@ -199,8 +170,8 @@ export class PlanningMode extends Mode {
     return parsed.plan
   }
 
-  public agentStartMessage(): BeforeAgentStartEventResult["message"] {
-    return { customType: "plan-mode-context", content: PLAN_MODE_PROMPT, display: false }
+  public systemPrompt(): string {
+    return PLAN_MODE_PROMPT
   }
 
   // Persist state after every planning turn (the plan itself arrives via the

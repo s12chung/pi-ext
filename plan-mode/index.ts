@@ -21,9 +21,6 @@
 import type {
   AgentSettledEvent,
   BeforeAgentStartEvent,
-  BeforeAgentStartEventResult,
-  ContextEvent,
-  ContextEventResult,
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
@@ -32,6 +29,7 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 import { DefaultMode, completionTool } from "./mode.ts"
 import { decodeSession } from "./session/decode.ts"
+import { safeSetSection } from "./session/prompt.ts"
 import {
   type ModeSlot,
   presentApproval,
@@ -96,22 +94,12 @@ function planCommand(
 }
 
 function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionState): void {
-  pi.on("context", (event: ContextEvent): ContextEventResult => ({
-    messages: state.modeSlot.mode.filterContext(event.messages),
-  }))
-
-  // Inject plan/execution context before agent starts
-  pi.on(
-    "before_agent_start",
-    (
-      _event: BeforeAgentStartEvent,
-      ctx: ExtensionContext,
-    ): BeforeAgentStartEventResult | undefined => {
-      refreshStateForFirstPrompt(state, ctx)
-      const message = state.modeSlot.mode.agentStartMessage()
-      return message ? { message } : undefined
-    },
-  )
+  // Install the mode's system-prompt section for the upcoming run; pi diffs
+  // it in on the first planning run and out on the next default run
+  pi.on("before_agent_start", (event: BeforeAgentStartEvent, ctx: ExtensionContext): void => {
+    refreshStateForFirstPrompt(state, ctx)
+    safeSetSection(state.modeSlot.mode.systemPrompt(), event.systemPromptOptions.sections)
+  })
 
   pi.on("agent_end", (): void => state.modeSlot.mode.onAgentEnd(pi))
 

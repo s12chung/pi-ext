@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { AgentMessage } from "@earendil-works/pi-agent-core"
 import { DefaultMode, type Mode, PlanningMode } from "./mode.ts"
 import { PLAN } from "./utils/fixtures.ts"
 
@@ -57,33 +56,15 @@ test("DefaultMode refuses plan_complete and stays permissive", () => {
     () => mode.completePlan({ plan: PLAN }),
     /only available while plan mode is active/u,
   )
-  assert.equal(mode.agentStartMessage(), undefined)
+  assert.equal(mode.systemPrompt(), "")
   assert.equal(mode.shouldPromptApproval(), false)
 })
 
-test("PlanningMode injects the plan-mode prompt with the read-only constraint", () => {
-  const planning = new PlanningMode()
-  const message = planning.agentStartMessage()
-  assert.equal(message?.customType, "plan-mode-context")
-  assert.equal(message?.display, false)
-  const content = message?.content
-  assert.ok(typeof content === "string" && content.includes("[PLAN MODE ACTIVE]"))
+test("PlanningMode returns the plan-mode prompt with the read-only constraint", () => {
+  const content = new PlanningMode().systemPrompt()
+  assert.match(content, /\[PLAN MODE ACTIVE\]/u)
   assert.match(content, /MUST NOT/u)
   assert.match(content, /ONLY inside a temporary folder/u)
-})
-
-test("DefaultMode strips stale planning context; PlanningMode passes it through", () => {
-  const messages = [
-    { role: "user", content: "hello" },
-    { role: "custom", customType: "plan-mode-context", content: [] },
-    { role: "user", content: "[PLAN MODE ACTIVE]" },
-    { role: "user", content: [{ type: "text", text: "[PLAN MODE ACTIVE]" }] },
-    { role: "assistant", content: [] },
-    { role: "user", content: [{ type: "text", text: "plain" }] },
-  ] as unknown as AgentMessage[]
-
-  assert.equal(new DefaultMode().filterContext(messages).length, 3)
-  assert.equal(new PlanningMode().filterContext(messages).length, messages.length)
 })
 
 test("toState shapes carry each mode's own fields", () => {
