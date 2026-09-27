@@ -8,8 +8,7 @@
  * - /plan command to toggle
  * - Bash restricted to allowlisted read-only commands
  * - Plan-only tools (questionnaire, plan_complete) active only while planning
- * - Plan submitted via plan_complete as free-flow markdown (format-validated;
- *   heading titles become the phase checklist)
+ * - Plan submitted via plan_complete as free-flow markdown (format-validated)
  * - Plan stored in session memory (appendEntry) - no files, no drift
  *
  * The mode objects (mode.ts) own the tool set, UI, and event behavior;

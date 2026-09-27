@@ -1,11 +1,8 @@
 /**
  * Structured plan submission for plan mode — replaces regex extraction of
  * "Plan:" sections from assistant prose with an explicit tool call. The plan
- * is free-flow markdown; phase titles are derived from its headings.
- *
- * Also owns the planning-phase interface stored by PlanningMode (mode.ts):
- * explore → approval, advanced only by plan_complete, plus the tool's
- * registration and rendering.
+ * is free-flow markdown. Also owns the phases stored by PlanningMode
+ * (mode.ts) and the tool's registration and rendering.
  */
 
 import { getMarkdownTheme, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -24,8 +21,7 @@ export const PLAN_COMPLETE_MAX_PHASES = 10;
 // The phases of the planning flow, advanced by plan_complete: explore until
 // the plan is submitted, approval while the menu is owed - opening the menu
 // consumes the phase, so rejection simply rests back in explore
-export const PLANNING_PHASES = ["explore", "approval"] as const;
-export type PlanningPhase = (typeof PLANNING_PHASES)[number];
+export type PlanningPhase = "explore" | "approval";
 
 export type PlanCompletionDetails = {
 	version: typeof PLAN_COMPLETE_VERSION;
@@ -51,20 +47,9 @@ export const PLAN_COMPLETE_PARAMS = {
 	},
 } as const;
 
-// A phase title line: a markdown heading of any level, numbered ("## 1. Title")
-const PHASE_HEADING_PATTERN = /^#{1,6}\s+(\d+)[.)]\s+(.+?)\s*$/;
-
-function phaseHeadings(plan: string): Array<{ number: number; title: string }> {
-	return plan.split("\n").flatMap((line) => {
-		const match = PHASE_HEADING_PATTERN.exec(line.trim());
-		return match ? [{ number: Number(match[1]), title: match[2] }] : [];
-	});
-}
-
-// The phase list is derived from the plan: just the heading titles
-export function phaseTitles(plan: string): string[] {
-	return phaseHeadings(plan).map((heading) => heading.title);
-}
+// A phase heading line: a markdown heading of any level, numbered, with a
+// non-empty title ("## 1. Title") - only the number is captured
+const PHASE_HEADING_PATTERN = /^#{1,6}\s+(\d+)[.)]\s+.+$/;
 
 type NormalizePlanCompletionResult = { ok: true; plan: string } | { ok: false; error: string };
 
@@ -82,17 +67,20 @@ export function normalizePlanCompletion(input: unknown): NormalizePlanCompletion
 		return invalidPlan("plan must be a non-empty string");
 	}
 	const plan = input.plan.trim();
-	const headings = phaseHeadings(plan);
-	if (headings.length === 0) {
+	const headingNumbers = plan.split("\n").flatMap((line) => {
+		const match = PHASE_HEADING_PATTERN.exec(line.trim());
+		return match ? [Number(match[1])] : [];
+	});
+	if (headingNumbers.length === 0) {
 		return invalidPlan('plan must contain numbered markdown phase headings, e.g. "## 1. Title"');
 	}
-	if (headings.length > PLAN_COMPLETE_MAX_PHASES) {
+	if (headingNumbers.length > PLAN_COMPLETE_MAX_PHASES) {
 		return invalidPlan(`plan must not exceed ${PLAN_COMPLETE_MAX_PHASES} phase headings`);
 	}
-	const brokenAt = headings.findIndex((heading, i) => heading.number !== i + 1);
+	const brokenAt = headingNumbers.findIndex((number, i) => number !== i + 1);
 	if (brokenAt !== -1) {
 		return invalidPlan(
-			`phase headings must be numbered 1..${headings.length} in order (heading ${brokenAt + 1} is numbered ${headings[brokenAt].number})`,
+			`phase headings must be numbered 1..${headingNumbers.length} in order (heading ${brokenAt + 1} is numbered ${headingNumbers[brokenAt]})`,
 		);
 	}
 	return { ok: true, plan };
@@ -136,32 +124,16 @@ export function planCompleted(plan: string): PlanCompletedResult {
 // submitted, approval while it awaits the menu
 export abstract class PlanningPhaseState {
 	abstract readonly id: PlanningPhase;
-	abstract readonly plan: string | undefined;
-	// explore → approval; approval re-enters approval with the refined plan
-	abstract submitPlan(plan: string): PlanningPhaseState;
 
-	// plan_complete execution shared by both phases: validate, transition,
-	// build the tool result
-	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (registerTool: plan_mode_complete)
-	completePlan(params: unknown): { next: PlanningPhaseState; result: PlanCompletedResult } {
-		const parsed = normalizePlanCompletion(params);
-		if (!parsed.ok) throw new Error(parsed.error);
-		return { next: this.submitPlan(parsed.plan), result: planCompleted(parsed.plan) };
-	}
-
-	// Whether the agent_settled menu is owed for this phase
-	shouldPromptApproval(): boolean {
-		return false;
+	// Both phases advance identically: the submitted plan is owed its menu -
+	// a refined plan re-enters approval with the new plan
+	submitPlan(plan: string): PlanningPhaseState {
+		return new ApprovePhase(plan);
 	}
 }
 
 export class ExplorePhase extends PlanningPhaseState {
 	readonly id = "explore" as const;
-	readonly plan: string | undefined = undefined;
-
-	submitPlan(plan: string): PlanningPhaseState {
-		return new ApprovePhase(plan);
-	}
 }
 
 // Exists only while the menu is owed: promptPlanApproval rejects it back to
@@ -173,14 +145,6 @@ export class ApprovePhase extends PlanningPhaseState {
 	constructor(plan: string) {
 		super();
 		this.plan = plan;
-	}
-
-	submitPlan(plan: string): PlanningPhaseState {
-		return new ApprovePhase(plan);
-	}
-
-	shouldPromptApproval(): boolean {
-		return true;
 	}
 }
 

@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
 	ExplorePhase,
+	isApprovePhase,
 	normalizePlanCompletion,
-	phaseTitles,
 	planCompleted,
 	planCompletionMarkdown,
 	planFromCompletionDetails,
@@ -65,10 +65,6 @@ test("normalizePlanCompletion rejects out-of-order numbering", () => {
 	assert.equal(normalizePlanCompletion({ plan: "## 1. A\n## 3. B" }).ok, false);
 });
 
-test("phaseTitles grabs just the heading titles", () => {
-	assert.deepEqual(phaseTitles(PLAN), ["Core", "Rendering", "Verification"]);
-});
-
 test("planCompleted terminates the turn and round-trips through details", () => {
 	const result = planCompleted(PLAN);
 	assert.equal(result.terminate, true);
@@ -99,32 +95,14 @@ test("planCompletionMarkdown returns empty without text content", () => {
 	assert.equal(planCompletionMarkdown({ content: [], details: { version: 2, source: "plan_complete" } }), "");
 });
 
-test("explore holds no plan and never prompts for approval", () => {
-	const explore = new ExplorePhase();
-	assert.equal(explore.id, "explore");
-	assert.equal(explore.plan, undefined);
-	assert.equal(explore.shouldPromptApproval(), false);
-});
-
-test("submitPlan advances explore → approval, menu owed", () => {
+test("submitPlan advances explore → approval with the plan", () => {
 	const approval = new ExplorePhase().submitPlan(PLAN);
-	assert.equal(approval.id, "approval");
+	assert.ok(isApprovePhase(approval));
 	assert.equal(approval.plan, PLAN);
-	assert.equal(approval.shouldPromptApproval(), true);
 });
 
-test("a refined plan re-enters approval with the menu owed again", () => {
+test("a refined plan re-enters approval", () => {
 	const refined = new ApprovePhase(PLAN).submitPlan("## 1. Reworked\nDifferent.\n\n## 2. Verify\nTest.");
-	assert.equal(refined.id, "approval");
+	assert.ok(isApprovePhase(refined));
 	assert.equal(refined.plan, "## 1. Reworked\nDifferent.\n\n## 2. Verify\nTest.");
-	assert.equal(refined.shouldPromptApproval(), true);
-});
-
-test("phase completePlan validates before transitioning", () => {
-	assert.throws(() => new ExplorePhase().completePlan({ plan: "just prose" }), /phase headings/);
-	const { next, result } = new ExplorePhase().completePlan({ plan: PLAN });
-	assert.equal(next.id, "approval");
-	assert.equal(next.plan, PLAN);
-	assert.equal(result.terminate, true);
-	assert.ok(result.content[0]?.text.includes(PLAN));
 });

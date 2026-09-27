@@ -7,7 +7,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 import { ensureBorderTint, setPlanBorderActive } from "./border-tint.ts";
-import { ExplorePhase, type PlanCompletedResult, type PlanningPhaseState } from "./completion-tool.ts";
+import { ExplorePhase, isApprovePhase, normalizePlanCompletion, planCompleted, type PlanCompletedResult, type PlanningPhaseState } from "./completion-tool.ts";
 import type { PlanModeState } from "./state.ts";
 import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils.ts";
 
@@ -147,7 +147,7 @@ export class PlanningMode extends Mode {
 	toolsBeforePlanMode: string[] | undefined;
 
 	get plan(): string | undefined {
-		return this.phase.plan;
+		return isApprovePhase(this.phase) ? this.phase.plan : undefined;
 	}
 
 	enter(pi: ExtensionAPI, ctx: ExtensionContext, options?: EnterOptions): void {
@@ -176,11 +176,13 @@ export class PlanningMode extends Mode {
 		};
 	}
 
-	// Delegates to the phase: validate, explore → approval, stage the menu
+	// Validate, advance the phase, build the tool result
+	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (registerTool: plan_mode_complete)
 	async completePlan(params: unknown): Promise<PlanCompletedResult> {
-		const { next, result } = this.phase.completePlan(params);
-		this.phase = next;
-		return result;
+		const parsed = normalizePlanCompletion(params);
+		if (!parsed.ok) throw new Error(parsed.error);
+		this.phase = this.phase.submitPlan(parsed.plan);
+		return planCompleted(parsed.plan);
 	}
 
 	agentStartMessage(): { customType: string; content: string; display: boolean } {
@@ -203,8 +205,9 @@ export class PlanningMode extends Mode {
 		pi.appendEntry("plan-mode", this.toState());
 	}
 
+	// The agent_settled menu is owed while a plan is staged
 	shouldPromptApproval(): boolean {
-		return this.phase.shouldPromptApproval();
+		return isApprovePhase(this.phase);
 	}
 
 	// The approval menu opened: back to exploring, plan in hand only inside the
