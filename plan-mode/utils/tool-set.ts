@@ -18,9 +18,7 @@ export const REQUIRED_PLAN_MODE_TOOL_NAMES = [
   PLAN_COMPLETE_TOOL_NAME,
 ] as const
 
-function uniqueToolNames(toolNames: string[]): string[] {
-  return [...new Set(toolNames)]
-}
+const uniqueToolNames = (toolNames: string[]): string[] => [...new Set(toolNames)]
 
 export function withRequiredPlanModeTools(toolNames: string[]): string[] {
   return uniqueToolNames([

@@ -64,13 +64,9 @@ export abstract class Mode {
   public abstract toState(): PlanModeState
 
   /** This mode's system-prompt section content; empty string contributes no section. */
-  public systemPrompt(): string {
-    return ""
-  }
-  public onAgentEnd(_pi: ExtensionAPI): void {}
-  public shouldPromptApproval(): boolean {
-    return false
-  }
+  public systemPrompt = (): string => ""
+  public onAgentEnd = (_pi: ExtensionAPI): void => {}
+  public shouldPromptApproval = (): boolean => false
 
   // Registration is split from the logic (see completionTool):
   // execute delegates here, and the base refuses outside plan mode
@@ -80,13 +76,9 @@ export abstract class Mode {
 
   // Narrowing predicates on the base so callers chain them off the mode
   // object; instanceof keeps each answer single-sourced - no subclass overrides
-  public isPlanning(): this is PlanningMode {
-    return this instanceof PlanningMode
-  }
+  public isPlanning = (): this is PlanningMode => this instanceof PlanningMode
 
-  public isDefault(): this is DefaultMode {
-    return this instanceof DefaultMode
-  }
+  public isDefault = (): this is DefaultMode => this instanceof DefaultMode
 }
 
 export class DefaultMode extends Mode {
@@ -115,9 +107,7 @@ export class DefaultMode extends Mode {
     if (options?.notify !== false) ctx.ui.notify("Plan mode disabled. Full access restored.")
   }
 
-  public next(): Mode {
-    return new PlanningMode()
-  }
+  public next = (): Mode => new PlanningMode()
 
   public toState(): PlanModeState {
     return {
@@ -149,9 +139,7 @@ export class PlanningMode extends Mode {
       ctx.ui.notify("Plan mode enabled. Built-in write tools disabled.")
   }
 
-  public next(): Mode {
-    return new DefaultMode(undefined, this.toolsBeforePlanMode)
-  }
+  public next = (): Mode => new DefaultMode(undefined, this.toolsBeforePlanMode)
 
   public toState(): PlanModeState {
     return {
@@ -170,20 +158,14 @@ export class PlanningMode extends Mode {
     return parsed.plan
   }
 
-  public systemPrompt(): string {
-    return PLAN_MODE_PROMPT
-  }
+  public systemPrompt = (): string => PLAN_MODE_PROMPT
 
   // Persist state after every planning turn (the plan itself arrives via the
   // plan_complete tool call, not prose extraction)
-  public onAgentEnd(pi: ExtensionAPI): void {
-    pi.appendEntry("plan-mode", this.toState())
-  }
+  public onAgentEnd = (pi: ExtensionAPI): void => pi.appendEntry("plan-mode", this.toState())
 
   // The agent_settled menu is owed while a plan is staged
-  public shouldPromptApproval(): boolean {
-    return this.plan !== undefined
-  }
+  public shouldPromptApproval = (): boolean => this.plan !== undefined
 
   // The approval menu opened: the plan leaves the field and lives only in the
   // menu - a refined plan re-enters approval via plan_complete

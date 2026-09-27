@@ -15,6 +15,9 @@
     "typescript/no-non-null-assertion": "error",
     "typescript/consistent-type-imports": "error",
 
+    // Concise arrow bodies; with oxfmt they format to one line (e.g. `= (): boolean => false`)
+    "arrow-body-style": ["error", "as-needed"],
+
     // Members within a statement; oxfmt's sortImports owns statement order (it can't sort members)
     "sort-imports": ["error", { "ignoreDeclarationSort": true }],
 
