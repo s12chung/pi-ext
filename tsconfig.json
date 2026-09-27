@@ -9,5 +9,5 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["plan-mode/**/*.ts"]
+  "include": ["plan-mode/**/*.ts", "starship-footer/**/*.ts"]
 }

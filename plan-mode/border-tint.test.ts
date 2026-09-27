@@ -45,22 +45,6 @@ test("arrows and labels inside the border survive thickening", () => {
   assert.equal(editor.borderColor("─ ↑ 3 ─"), "<plan>━ ↑ 3 ━</plan>")
 })
 
-test("idle border color can emulate a theme UI's static look", () => {
-  const editor = fakeEditor()
-  const active = { value: false }
-  tintPlanBorders(
-    editor,
-    () => active.value,
-    plan,
-    (text) => `<gray>${text}</gray>`,
-  )
-  assert.equal(editor.borderColor("──"), "<gray>──</gray>")
-  active.value = true
-  assert.equal(editor.borderColor("──"), "<plan>━━</plan>")
-  active.value = false
-  assert.equal(editor.borderColor("──"), "<gray>──</gray>")
-})
-
 test("ensureBorderTint wraps the installed factory once and follows plan-active flips", () => {
   const editor = fakeEditor()
   const base = (): BorderColoredEditor => editor

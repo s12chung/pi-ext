@@ -177,18 +177,6 @@ function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState
     state.refreshStateBeforeFirstAgentStart = event.reason === "new"
     state.modeSlot.mode = restoreMode(decodeSession(ctx.sessionManager.getEntries()))
     state.modeSlot.mode.enter(pi, ctx, { notify: false })
-
-    // Zen installs its editor later in the same startup cascade (its session_start
-    // runs after ours), so the first check above sees an unmarked slot; re-check
-    // shortly after so even the first idle frame gets the emulated border
-    if (ctx.hasUI) {
-      const rev = state.modeSlot.rev
-      for (const delay of [0, 100, 500, 2000]) {
-        setTimeout(() => {
-          if (rev === state.modeSlot.rev) state.modeSlot.mode.enter(pi, ctx, { notify: false })
-        }, delay)
-      }
-    }
   })
 }
 
