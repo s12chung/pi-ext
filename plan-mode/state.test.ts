@@ -1,30 +1,41 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { JsonValue } from "@earendil-works/pi-ai";
 import { ApprovePhase } from "./completion-tool.ts";
+import { decodeSession } from "./decode.ts";
 import { presentApproval, promptPlanApproval, restoreMode, setMode, type ModeSlot } from "./state.ts";
-import { DefaultMode, isDefaultMode, isPlanningMode, PlanningMode } from "./mode.ts";
+import { DefaultMode, isDefaultMode, isPlanningMode, type Mode, PlanningMode } from "./mode.ts";
 
 // Minimal session-entry builders mirroring the shapes pi persists
-const stateEntry = (data: unknown, ...after: unknown[]) => [
-	{ type: "custom", customType: "plan-mode", data },
+const entryBase = { id: "e0", parentId: null, timestamp: "2025-01-01T00:00:00.000Z" };
+const stateEntry = (data: unknown, ...after: SessionEntry[]): SessionEntry[] => [
+	{ type: "custom", customType: "plan-mode", data, ...entryBase },
 	...after,
 ];
-const planCompleteResult = (details: unknown) => ({
+const planCompleteResult = (details: JsonValue): SessionEntry => ({
 	type: "message",
-	message: { role: "toolResult", toolName: "plan_complete", details },
+	...entryBase,
+	message: { role: "toolResult", toolCallId: "tc0", toolName: "plan_complete", content: [], isError: false, timestamp: 0, details },
 });
-const assistantEntry = { type: "message", message: { role: "assistant", content: [] } };
+const userEntry: SessionEntry = {
+	type: "message",
+	...entryBase,
+	message: { role: "user", content: "and then?", timestamp: 0 },
+};
+
+// index.ts's wiring: decode at the boundary, restore from the typed result
+const restoreFromEntries = (entries: SessionEntry[]): Mode => restoreMode(decodeSession(entries));
 
 const PLAN = "## 1. Core\nSwap the field.\n\n## 2. Verification\nmake test.";
 
 test("returns default when no state entry exists", () => {
-	assert.ok(isDefaultMode(restoreMode([])));
-	assert.ok(isDefaultMode(restoreMode([{ type: "custom", customType: "plan-mode" }])));
+	assert.ok(isDefaultMode(restoreFromEntries([])));
+	assert.ok(isDefaultMode(restoreFromEntries([{ type: "custom", customType: "plan-mode", ...entryBase }])));
 });
 
 test("restores a planning state in approval with its plan", () => {
-	const mode = restoreMode(stateEntry({ mode: "planning", phase: "approval", plan: PLAN, toolsBeforePlanMode: ["read"] }));
+	const mode = restoreFromEntries(stateEntry({ mode: "planning", phase: "approval", plan: PLAN, toolsBeforePlanMode: ["read"] }));
 	assert.ok(isPlanningMode(mode));
 	assert.equal(mode.phase.id, "approval");
 	assert.equal(mode.plan, PLAN);
@@ -32,21 +43,21 @@ test("restores a planning state in approval with its plan", () => {
 });
 
 test("restores an explore planning state without a plan", () => {
-	const mode = restoreMode(stateEntry({ mode: "planning", phase: "explore" }));
+	const mode = restoreFromEntries(stateEntry({ mode: "planning", phase: "explore" }));
 	assert.ok(isPlanningMode(mode));
 	assert.equal(mode.phase.id, "explore");
 	assert.equal(mode.plan, undefined);
 });
 
 test("restores a handoff default state with activePlan", () => {
-	const mode = restoreMode(stateEntry({ mode: "default", activePlan: PLAN }));
+	const mode = restoreFromEntries(stateEntry({ mode: "default", activePlan: PLAN }));
 	assert.ok(isDefaultMode(mode));
 	assert.equal(mode.activePlan, PLAN);
 	assert.equal(mode.toolsBeforePlanMode, undefined);
 });
 
 test("recovers the plan from a plan_complete toolResult after the state entry", () => {
-	const mode = restoreMode(
+	const mode = restoreFromEntries(
 		stateEntry({ mode: "planning", phase: "explore" }, planCompleteResult({ version: 1, source: "plan_complete", plan: PLAN })),
 	);
 	assert.ok(isPlanningMode(mode));
@@ -55,7 +66,7 @@ test("recovers the plan from a plan_complete toolResult after the state entry", 
 });
 
 test("ignores plan_complete toolResults before the state entry", () => {
-	const mode = restoreMode([
+	const mode = restoreFromEntries([
 		planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. Old" }),
 		...stateEntry({ mode: "planning" }),
 	]);
@@ -67,10 +78,10 @@ test("newest plan_complete toolResult wins", () => {
 	const entries = stateEntry(
 		{ mode: "planning" },
 		planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. First" }),
-		assistantEntry,
+		userEntry,
 		planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. Second" }),
 	);
-	assert.equal((restoreMode(entries) as PlanningMode).plan, "## 1. Second");
+	assert.equal((restoreFromEntries(entries) as PlanningMode).plan, "## 1. Second");
 });
 
 test("invalid persisted plan falls back to toolResult recovery", () => {
@@ -78,37 +89,38 @@ test("invalid persisted plan falls back to toolResult recovery", () => {
 		{ mode: "planning", phase: "approval", plan: "  " },
 		planCompleteResult({ version: 1, source: "plan_complete", plan: PLAN }),
 	);
-	assert.equal((restoreMode(entries) as PlanningMode).plan, PLAN);
+	assert.equal((restoreFromEntries(entries) as PlanningMode).plan, PLAN);
 });
 
 test("persisted plan without phase headings is ignored", () => {
-	const mode = restoreMode(stateEntry({ mode: "planning", phase: "approval", plan: "just prose" }));
+	const mode = restoreFromEntries(stateEntry({ mode: "planning", phase: "approval", plan: "just prose" }));
 	assert.ok(isPlanningMode(mode));
 	assert.equal(mode.plan, undefined);
 	assert.equal(mode.phase.id, "explore");
 });
 
 test("default state ignores a persisted planning plan", () => {
-	assert.equal((restoreMode(stateEntry({ mode: "default", plan: "## 1. Stale", activePlan: PLAN })) as DefaultMode).activePlan, PLAN);
-	assert.equal((restoreMode(stateEntry({ enabled: false, plan: "## 1. Stale" })) as DefaultMode).activePlan, undefined);
+	assert.equal((restoreFromEntries(stateEntry({ mode: "default", plan: "## 1. Stale", activePlan: PLAN })) as DefaultMode).activePlan, PLAN);
+	assert.equal((restoreFromEntries(stateEntry({ enabled: false, plan: "## 1. Stale" })) as DefaultMode).activePlan, undefined);
 });
 
 test("ignores toolResults from other tools", () => {
-	const bashResult = {
+	const bashResult: SessionEntry = {
 		type: "message",
-		message: { role: "toolResult", toolName: "bash", details: { version: 1, source: "plan_complete", plan: PLAN } },
+		...entryBase,
+		message: { role: "toolResult", toolCallId: "tc0", toolName: "bash", content: [], isError: false, timestamp: 0, details: { version: 1, source: "plan_complete", plan: PLAN } },
 	};
-	assert.equal(restoreMode(stateEntry({ mode: "planning" }, bashResult)).shouldPromptApproval(), false);
+	assert.equal(restoreFromEntries(stateEntry({ mode: "planning" }, bashResult)).shouldPromptApproval(), false);
 });
 
 test("migrates the pre-mode-objects enabled shape", () => {
-	const planning = restoreMode(stateEntry({ enabled: true, plan: PLAN, toolsBeforePlanMode: ["read"] }));
+	const planning = restoreFromEntries(stateEntry({ enabled: true, plan: PLAN, toolsBeforePlanMode: ["read"] }));
 	assert.ok(isPlanningMode(planning));
 	assert.equal(planning.phase.id, "approval");
 	assert.equal(planning.plan, PLAN);
 	assert.deepEqual(planning.toolsBeforePlanMode, ["read"]);
 
-	const handoff = restoreMode(stateEntry({ enabled: false, activePlan: PLAN }));
+	const handoff = restoreFromEntries(stateEntry({ enabled: false, activePlan: PLAN }));
 	assert.ok(isDefaultMode(handoff));
 	assert.equal(handoff.activePlan, PLAN);
 });
@@ -117,10 +129,10 @@ test("toState round-trips through restoreMode", () => {
 	const planning = new PlanningMode();
 	planning.phase = new ApprovePhase(PLAN);
 	planning.toolsBeforePlanMode = ["read"];
-	assert.deepEqual(restoreMode(stateEntry(planning.toState())).toState(), planning.toState());
+	assert.deepEqual(restoreFromEntries(stateEntry(planning.toState())).toState(), planning.toState());
 
 	const handoff = new DefaultMode(PLAN);
-	assert.deepEqual(restoreMode(stateEntry(handoff.toState())).toState(), handoff.toState());
+	assert.deepEqual(restoreFromEntries(stateEntry(handoff.toState())).toState(), handoff.toState());
 });
 
 function planningWithPlan(): PlanningMode {

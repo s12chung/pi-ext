@@ -4,10 +4,9 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { TextContent } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 import { ensureBorderTint, setPlanBorderActive } from "./border-tint.ts";
-import { ExplorePhase, isApprovePhase, normalizePlanCompletion, planCompleted, type PlanCompletedResult, type PlanningPhaseState } from "./completion-tool.ts";
+import { ExplorePhase, isApprovePhase, normalizePlanCompletion, planCompleted, type PlanCompletionDetails, type PlanCompletionParams, type PlanningPhaseState } from "./completion-tool.ts";
 import type { PlanModeState } from "./state.ts";
 import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils.ts";
 
@@ -64,7 +63,7 @@ export abstract class Mode {
 	/** Persisted shape; state.ts reconstructs the objects from it */
 	abstract toState(): PlanModeState;
 
-	agentStartMessage(): { customType: string; content: string; display: boolean } | undefined { return undefined; }
+	agentStartMessage(): BeforeAgentStartEventResult["message"] { return undefined; }
 	bashBlockReason(_command: string): ToolCallEventResult | undefined { return undefined; }
 	filterContext(messages: AgentMessage[]): AgentMessage[] { return messages; }
 	onAgentEnd(_pi: ExtensionAPI): void {}
@@ -72,7 +71,7 @@ export abstract class Mode {
 
 	// Registration is split from the logic (see registerCompletionTool):
 	// execute delegates here, and the base refuses outside plan mode
-	async completePlan(_params: unknown): Promise<PlanCompletedResult> {
+	async completePlan(_params: PlanCompletionParams): Promise<AgentToolResult<PlanCompletionDetails>> {
 		throw new Error("plan_complete is only available while plan mode is active");
 	}
 }
@@ -122,18 +121,15 @@ export class DefaultMode extends Mode {
 		// that miss regardless; and the filter is deterministic, so the first DEFAULT
 		// request re-caches the filtered prefix and later turns extend it again.
 		return messages.filter((m) => {
-			const msg = m as AgentMessage & { customType?: string };
-			if (msg.customType === "plan-mode-context") return false;
-			if (msg.role !== "user") return true;
+			if (m.role === "custom" && m.customType === "plan-mode-context") return false;
+			if (m.role !== "user") return true;
 
-			const content = msg.content;
+			const content = m.content;
 			if (typeof content === "string") {
 				return !content.includes("[PLAN MODE ACTIVE]");
 			}
 			if (Array.isArray(content)) {
-				return !content.some(
-					(c) => c.type === "text" && (c as TextContent).text?.includes("[PLAN MODE ACTIVE]"),
-				);
+				return !content.some((c) => c.type === "text" && c.text.includes("[PLAN MODE ACTIVE]"));
 			}
 			return true;
 		});
@@ -178,14 +174,14 @@ export class PlanningMode extends Mode {
 
 	// Validate, advance the phase, build the tool result
 	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (registerTool: plan_mode_complete)
-	async completePlan(params: unknown): Promise<PlanCompletedResult> {
-		const parsed = normalizePlanCompletion(params);
+	async completePlan(params: PlanCompletionParams): Promise<AgentToolResult<PlanCompletionDetails>> {
+		const parsed = normalizePlanCompletion(params.plan);
 		if (!parsed.ok) throw new Error(parsed.error);
 		this.phase = this.phase.submitPlan(parsed.plan);
 		return planCompleted(parsed.plan);
 	}
 
-	agentStartMessage(): { customType: string; content: string; display: boolean } {
+	agentStartMessage(): BeforeAgentStartEventResult["message"] {
 		return { customType: "plan-mode-context", content: PLAN_MODE_PROMPT, display: false };
 	}
 

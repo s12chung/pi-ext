@@ -30,7 +30,7 @@ export function setPlanBorderActive(active: boolean): void {
 
 // Read at wrap time: once our unmarked factory owns the slot, zen's mark on it is hidden
 function isZentuiFactory(factory: EditorFactory | undefined): boolean {
-	return (factory as Record<PropertyKey, unknown> | undefined)?.[ZENTUI_EDITOR_OWNER] !== undefined;
+	return factory !== undefined && ZENTUI_EDITOR_OWNER in factory;
 }
 
 // Idempotent: applies the plan/idle border colors and installs (not replaces)

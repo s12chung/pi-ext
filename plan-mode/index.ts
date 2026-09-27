@@ -12,14 +12,30 @@
  * - Plan stored in session memory (appendEntry) - no files, no drift
  *
  * The mode objects (mode.ts) own the tool set, UI, and event behavior;
- * state.ts swaps them, resolves the approval menu, and persists them. This
- * module is the wiring: commands, events, and session lifecycle.
+ * state.ts swaps them, resolves the approval menu, and persists them;
+ * decode.ts turns persisted session entries into typed state - the only
+ * module that sees their unknown payloads. This module is the wiring:
+ * commands, events, and session lifecycle.
  */
 
 import { appendFileSync } from "node:fs";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+	AgentSettledEvent,
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ContextEvent,
+	ContextEventResult,
+	ExtensionAPI,
+	ExtensionCommandContext,
+	ExtensionContext,
+	SessionStartEvent,
+	ToolCallEvent,
+	ToolCallEventResult,
+} from "@earendil-works/pi-coding-agent";
+import type { JsonValue } from "@earendil-works/pi-ai";
 import { DefaultMode, isDefaultMode, isPlanningMode, registerCompletionTool } from "./mode.ts";
 import questionnaire from "./questionnaire.ts";
+import { decodeSession } from "./decode.ts";
 import { type ModeSlot, presentApproval, promptPlanApproval, restoreMode, setMode } from "./state.ts";
 
 export default function planModeExtension(pi: ExtensionAPI): void {
@@ -45,7 +61,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	// bounces through it when the captured context is missing.
 	pi.registerCommand("plan", {
 		description: "Toggle plan mode (read-only exploration)",
-		handler: async (_args, ctx) => {
+		handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
 			latestCommandContext = ctx;
 			// With a completed plan, bare /plan reopens the approval menu instead of
 			// toggling the plan away (the picker's exit choice is the way out)
@@ -59,27 +75,33 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.on("tool_call", async (event) => {
+	// pi's CustomToolCallEvent types custom-tool inputs as Record<string, unknown>
+	// and its broad toolName survives the bash check in the union, so the
+	// command is vetted rather than cast
+	pi.on("tool_call", async (event: ToolCallEvent): Promise<ToolCallEventResult | undefined> => {
 		if (event.toolName !== "bash") return;
-		return modeSlot.mode.bashBlockReason(event.input.command as string);
+		const { command } = event.input;
+		return typeof command === "string" ? modeSlot.mode.bashBlockReason(command) : undefined;
 	});
 
-	pi.on("context", async (event) => ({ messages: modeSlot.mode.filterContext(event.messages) }));
+	pi.on("context", async (event: ContextEvent): Promise<ContextEventResult> => ({
+		messages: modeSlot.mode.filterContext(event.messages),
+	}));
 
 	// Inject plan/execution context before agent starts
-	pi.on("before_agent_start", async (_event, ctx) => {
+	pi.on("before_agent_start", async (_event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<BeforeAgentStartEventResult | undefined> => {
 		refreshStateForFirstPrompt(ctx);
 		const message = modeSlot.mode.agentStartMessage();
 		return message ? { message } : undefined;
 	});
 
-	pi.on("agent_end", async () => modeSlot.mode.onAgentEnd(pi));
+	pi.on("agent_end", async (): Promise<void> => modeSlot.mode.onAgentEnd(pi));
 
 	// Present the approval menu once the agent truly settles - not between a
 	// turn end and delivery of still-queued follow-up messages, which would
 	// stack a second menu behind the first
 	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (agent_settled)
-	pi.on("agent_settled", async (_event, ctx) => {
+	pi.on("agent_settled", async (_event: AgentSettledEvent, ctx: ExtensionContext): Promise<void> => {
 		if (!ctx.hasUI || !modeSlot.mode.shouldPromptApproval()) return;
 		if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
 		debugLog("agent_settled menu", { idle: true, pending: ctx.hasPendingMessages() });
@@ -90,7 +112,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	// deferred status refreshes and editor re-checks so nothing fires on a
 	// stale ctx afterwards
 	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (session_shutdown)
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (): Promise<void> => {
 		debugLog("session_shutdown");
 		latestCommandContext = undefined;
 		modeSlot.rev += 1;
@@ -100,7 +122,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	// Restore state on session start/resume from session memory (appendEntry).
 	// Runs on session replacement too (newSession/fork/switch): saved state is
 	// authoritative so the replaced session's mode/plan cannot leak.
-	pi.on("session_start", async (event, ctx) => {
+	pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
 		debugLog("session_start", { reason: event.reason });
 		latestCommandContext = undefined;
 		modeSlot.rev += 1;
@@ -108,7 +130,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		// after session_start, so the restore below misses them
 		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (refreshStateBeforeFirstAgentStart)
 		refreshStateBeforeFirstAgentStart = event.reason === "new";
-		modeSlot.mode = restoreMode(ctx.sessionManager.getEntries());
+		modeSlot.mode = restoreMode(decodeSession(ctx.sessionManager.getEntries()));
 		modeSlot.mode.enter(pi, ctx, { notify: false });
 
 		// Zen installs its editor later in the same startup cascade (its session_start
@@ -130,14 +152,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	function refreshStateForFirstPrompt(ctx: ExtensionContext): void {
 		if (!refreshStateBeforeFirstAgentStart) return;
 		refreshStateBeforeFirstAgentStart = false;
-		modeSlot.mode = restoreMode(ctx.sessionManager.getEntries());
+		modeSlot.mode = restoreMode(decodeSession(ctx.sessionManager.getEntries()));
 		const restoredPlan =
 			isPlanningMode(modeSlot.mode) ? modeSlot.mode.plan : isDefaultMode(modeSlot.mode) ? modeSlot.mode.activePlan : undefined;
 		debugLog("refreshStateForFirstPrompt", { restoredPlan: restoredPlan !== undefined });
 	}
 
 	// Env-gated trace for menu/handoff diagnosis: PLAN_MODE_DEBUG=<file> pi ...
-	function debugLog(event: string, data?: unknown): void {
+	function debugLog(event: string, data?: JsonValue): void {
 		const path = process.env.PLAN_MODE_DEBUG;
 		if (!path) return;
 		try {

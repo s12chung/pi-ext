@@ -63,7 +63,7 @@ test("PlanningMode injects the plan-mode prompt and blocks unsafe bash", () => {
 	const message = planning.agentStartMessage();
 	assert.equal(message?.customType, "plan-mode-context");
 	assert.equal(message?.display, false);
-	assert.ok(message?.content.includes("[PLAN MODE ACTIVE]"));
+	assert.ok(typeof message?.content === "string" && message.content.includes("[PLAN MODE ACTIVE]"));
 
 	const blocked = planning.bashBlockReason("git commit -m x");
 	assert.equal(blocked?.block, true);

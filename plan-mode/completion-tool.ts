@@ -5,8 +5,9 @@
  * (mode.ts) and the tool's registration and rendering.
  */
 
-import { getMarkdownTheme, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getMarkdownTheme, type AgentToolResult, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Markdown } from "@earendil-works/pi-tui";
+import type { Static } from "typebox";
 import type { Mode } from "./mode.ts";
 
 // Source (adapted: plan_mode_complete/plan string → plan_complete/plan markdown
@@ -47,6 +48,9 @@ export const PLAN_COMPLETE_PARAMS = {
 	},
 } as const;
 
+// The tool-call params pi hands execute, schema-validated upstream
+export type PlanCompletionParams = Static<typeof PLAN_COMPLETE_PARAMS>;
+
 // A phase heading line: a markdown heading of any level, numbered, with a
 // non-empty title ("## 1. Title") - only the number is captured
 const PHASE_HEADING_PATTERN = /^#{1,6}\s+(\d+)[.)]\s+.+$/;
@@ -62,11 +66,13 @@ function invalidPlan(reason: string): NormalizePlanCompletionResult {
 	return { ok: false, error: `${reason}. ${PLAN_FORMAT_HELP}` };
 }
 
-export function normalizePlanCompletion(input: unknown): NormalizePlanCompletionResult {
-	if (!isRecord(input) || typeof input.plan !== "string" || !input.plan.trim()) {
+// Format validation for both callers: pi hands execute schema-validated
+// params, and decode.ts narrows persisted session data before passing it in
+export function normalizePlanCompletion(input: string): NormalizePlanCompletionResult {
+	const plan = input.trim();
+	if (!plan) {
 		return invalidPlan("plan must be a non-empty string");
 	}
-	const plan = input.plan.trim();
 	const headingNumbers = plan.split("\n").flatMap((line) => {
 		const match = PHASE_HEADING_PATTERN.exec(line.trim());
 		return match ? [Number(match[1])] : [];
@@ -86,29 +92,7 @@ export function normalizePlanCompletion(input: unknown): NormalizePlanCompletion
 	return { ok: true, plan };
 }
 
-export function planFromCompletionDetails(value: unknown): string | undefined {
-	if (!isRecord(value)) return undefined;
-	if (value.version !== PLAN_COMPLETE_VERSION || value.source !== PLAN_COMPLETE_TOOL_NAME) {
-		return undefined;
-	}
-	const normalized = normalizePlanCompletion(value);
-	return normalized.ok ? normalized.plan : undefined;
-}
-
-// A persisted or restored plan must still validate before it is displayed
-export function validPlanText(value: unknown): string | undefined {
-	if (typeof value !== "string") return undefined;
-	const normalized = normalizePlanCompletion({ plan: value });
-	return normalized.ok ? normalized.plan : undefined;
-}
-
-export interface PlanCompletedResult {
-	content: Array<{ type: "text"; text: string }>;
-	details: PlanCompletionDetails;
-	terminate: true;
-}
-
-export function planCompleted(plan: string): PlanCompletedResult {
+export function planCompleted(plan: string): AgentToolResult<PlanCompletionDetails> {
 	return {
 		content: [{ type: "text", text: `**Proposed Plan**\n\n${plan}` }],
 		details: {
@@ -165,32 +149,22 @@ export function registerCompletionTool(pi: ExtensionAPI, currentMode: () => Mode
 			return currentMode().completePlan(params);
 		},
 		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/completion-tool.ts (renderPlanModeCompletion)
-		renderResult: (result: PlanCompletionRenderResult) =>
-			new Markdown(planCompletionMarkdown(result), 0, 0, getMarkdownTheme()),
+		renderResult: (result) => new Markdown(planCompletionMarkdown(result), 0, 0, getMarkdownTheme()),
 	});
 }
 
 // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/completion-tool.ts
-// (PlanModeCompletionRenderResult/planModeCompletionMarkdown; the Markdown wrapper that pairs
-// with this is registerCompletionTool above - plain node --test runs load the pi packages fine,
-// as mode.test.ts already proves)
-export type PlanCompletionRenderResult = {
-	content: Array<{ type: string; text?: string }>;
-	details?: unknown;
-};
-
+// (planModeCompletionMarkdown; the result type is pi's AgentToolResult, and the Markdown
+// wrapper that pairs with this is registerCompletionTool above - plain node --test runs load
+// the pi packages fine, as mode.test.ts already proves)
+//
 // Deviates from the source: no planFromCompletionDetails fallback here. pi always hands
 // renderResult a populated content (AgentToolResult.content is required; thrown errors become
 // text results), so that branch was unreachable in prod - details-based recovery is state.ts's
 // latestCompletionPlan instead.
-export function planCompletionMarkdown(result: PlanCompletionRenderResult): string {
+export function planCompletionMarkdown<T>(result: AgentToolResult<T>): string {
 	return result.content
-		.filter((block) => block.type === "text" && typeof block.text === "string")
-		.map((block) => block.text)
+		.flatMap((block) => (block.type === "text" ? [block.text] : []))
 		.join("\n")
 		.trim();
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

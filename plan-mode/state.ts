@@ -2,11 +2,13 @@
  * Session-state management for plan mode: restoring and swapping the mode
  * objects, resolving the approval menu, and persisting them to
  * custom session entries (appendEntry) - never files - as the single source
- * of truth.
+ * of truth. Restores consume decode.ts's typed view of the persisted
+ * entries; the unknown payloads never leave that boundary.
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isApprovePhase, ApprovePhase, PLAN_COMPLETE_TOOL_NAME, planFromCompletionDetails, validPlanText, type PlanningPhase } from "./completion-tool.ts";
+import { isApprovePhase, ApprovePhase, type PlanningPhase } from "./completion-tool.ts";
+import type { DecodedSession } from "./decode.ts";
 import { isCommandContext, isStaleExtensionContextError, startFreshImplementation } from "./fresh-implementation.ts";
 import { DefaultMode, isPlanningMode, PlanningMode, type EnterOptions, type Mode } from "./mode.ts";
 
@@ -22,73 +24,26 @@ export interface PlanModeState {
 	toolsBeforePlanMode?: string[];
 }
 
-type SessionEntry = {
-	type?: string;
-	customType?: string;
-	data?: unknown;
-	message?: {
-		role?: string;
-		toolName?: string;
-		details?: unknown;
-	};
-};
-
 // Source (adapted: latestPlan/activeImplementation plan strings → mode objects):
 // https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/state.ts
-export function restoreMode(entries: unknown[]): Mode {
-	const branch = entries as SessionEntry[];
-	let stateEntryIndex = -1;
-	for (let index = branch.length - 1; index >= 0; index -= 1) {
-		const candidate = branch[index];
-		if (candidate?.type === "custom" && candidate.customType === "plan-mode") {
-			stateEntryIndex = index;
-			break;
-		}
+export function restoreMode(decoded: DecodedSession): Mode {
+	const state = decoded.state;
+	if (state?.mode !== "planning") {
+		// Handoff entries carry the plan with plan mode disabled; read it only then,
+		// like activeImplementation in the source.
+		// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/state.ts (restorePlanModeState activeImplementation)
+		return new DefaultMode(state?.activePlan, state?.toolsBeforePlanMode);
 	}
-	const entry = branch[stateEntryIndex];
-	if (!isRecord(entry?.data)) return new DefaultMode();
-
-	const data = entry.data;
-	// Migrate the pre-mode-objects shape (enabled boolean) alongside the current one
-	if (data.mode === "planning" || data.enabled === true) {
-		return restorePlanning(data, branch.slice(stateEntryIndex + 1));
-	}
-	// Handoff entries carry the plan with plan mode disabled; read it only then,
-	// like activeImplementation in the source.
-	// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/state.ts (restorePlanModeState activeImplementation)
-	return new DefaultMode(validPlanText(data.activePlan), stringArray(data.toolsBeforePlanMode));
+	return restorePlanning(state, decoded.completionPlan);
 }
 
-function restorePlanning(data: Record<string, unknown>, afterStateEntry: SessionEntry[]): PlanningMode {
-	const persistedPlan = validPlanText(data.plan);
-	const recoveredPlan = persistedPlan ?? latestCompletionPlan(afterStateEntry);
+function restorePlanning(state: PlanModeState, recoveredPlan: string | undefined): PlanningMode {
 	const planning = new PlanningMode();
-	planning.toolsBeforePlanMode = stringArray(data.toolsBeforePlanMode);
+	planning.toolsBeforePlanMode = state.toolsBeforePlanMode;
 	// The menu is owed again after restore: it re-opens on the next settle
-	if (recoveredPlan) planning.phase = new ApprovePhase(recoveredPlan);
+	const plan = state.plan ?? recoveredPlan;
+	if (plan) planning.phase = new ApprovePhase(plan);
 	return planning;
-}
-
-// Recover the plan from the newest plan_complete toolResult after the state
-// entry (covers a crash between the tool call and the next persist).
-function latestCompletionPlan(entries: SessionEntry[]): string | undefined {
-	for (let index = entries.length - 1; index >= 0; index -= 1) {
-		const message = entries[index]?.message;
-		if (message?.role !== "toolResult" || message.toolName !== PLAN_COMPLETE_TOOL_NAME) continue;
-		const plan = planFromCompletionDetails(message.details);
-		if (plan) return plan;
-	}
-	return undefined;
-}
-
-function stringArray(value: unknown): string[] | undefined {
-	return Array.isArray(value) && value.every((item): item is string => typeof item === "string" && item.trim().length > 0)
-		? value
-		: undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // The live session slot index.ts owns: the current mode plus a counter that
