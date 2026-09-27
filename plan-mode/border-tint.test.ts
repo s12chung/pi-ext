@@ -4,9 +4,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
 import {
   type BorderColoredEditor,
   ensureBorderTint,
-  setIdleBorderColor,
   setPlanBorderActive,
-  setPlanBorderColor,
   tintPlanBorders,
 } from "./border-tint.ts"
 
@@ -16,10 +14,14 @@ function fakeEditor(): { borderColor: (text: string) => string } {
   }
 }
 
+function plan(text: string): string {
+  return `<plan>${text}</plan>`
+}
+
 test("border stays stock while inactive and tracks reassignment", () => {
   const editor = fakeEditor()
   const active = { value: false }
-  tintPlanBorders(editor, () => active.value)
+  tintPlanBorders(editor, () => active.value, plan)
   assert.equal(editor.borderColor("──"), "<b>──</b>")
   editor.borderColor = (text: string): string => `<thinking>${text}</thinking>`
   assert.equal(editor.borderColor("──"), "<thinking>──</thinking>")
@@ -28,8 +30,7 @@ test("border stays stock while inactive and tracks reassignment", () => {
 test("active border reads the plan color over heavy rails and survives clobbering", () => {
   const editor = fakeEditor()
   const active = { value: false }
-  tintPlanBorders(editor, () => active.value)
-  setPlanBorderColor((text) => `<plan>${text}</plan>`)
+  tintPlanBorders(editor, () => active.value, plan)
   active.value = true
   assert.equal(editor.borderColor("──"), "<plan>━━</plan>")
   editor.borderColor = (text: string): string => `<thinking>${text}</thinking>`
@@ -40,18 +41,20 @@ test("active border reads the plan color over heavy rails and survives clobberin
 
 test("arrows and labels inside the border survive thickening", () => {
   const editor = fakeEditor()
-  tintPlanBorders(editor, () => true)
-  setPlanBorderColor((text) => `<plan>${text}</plan>`)
+  tintPlanBorders(editor, () => true, plan)
   assert.equal(editor.borderColor("─ ↑ 3 ─"), "<plan>━ ↑ 3 ━</plan>")
 })
 
 test("idle border color can emulate a theme UI's static look", () => {
   const editor = fakeEditor()
   const active = { value: false }
-  tintPlanBorders(editor, () => active.value)
-  setIdleBorderColor((text) => `<gray>${text}</gray>`)
+  tintPlanBorders(
+    editor,
+    () => active.value,
+    plan,
+    (text) => `<gray>${text}</gray>`,
+  )
   assert.equal(editor.borderColor("──"), "<gray>──</gray>")
-  setPlanBorderColor((text) => `<plan>${text}</plan>`)
   active.value = true
   assert.equal(editor.borderColor("──"), "<plan>━━</plan>")
   active.value = false
