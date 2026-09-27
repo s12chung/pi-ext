@@ -10,7 +10,6 @@ import type {
   ExtensionContext,
   ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent"
-import { ExplorePhase, type PlanningPhaseState, isApprovePhase } from "./phases.ts"
 import type { PlanModeState } from "./session/state.ts"
 import { type PlanCompletionParams } from "./tools/completion.ts"
 import { normalizePlanCompletion } from "./tools/plan.ts"
@@ -90,6 +89,16 @@ export abstract class Mode {
   public completePlan(_params: PlanCompletionParams): string {
     throw new Error("plan_complete is only available while plan mode is active")
   }
+
+  // Narrowing predicates on the base so callers chain them off the mode
+  // object; instanceof keeps each answer single-sourced - no subclass overrides
+  public isPlanning(): this is PlanningMode {
+    return this instanceof PlanningMode
+  }
+
+  public isDefault(): this is DefaultMode {
+    return this instanceof DefaultMode
+  }
 }
 
 export class DefaultMode extends Mode {
@@ -157,14 +166,11 @@ export class DefaultMode extends Mode {
 }
 
 export class PlanningMode extends Mode {
-  // PLANNING_PHASE state, stored here: explore until plan_complete, approval
-  // after - the phases themselves are tools/completion.ts's interface
-  public phase: PlanningPhaseState = new ExplorePhase()
+  // The phase is the staged plan itself: undefined explores, a string owes its
+  // approval menu - plan_complete stages it, the menu resolution (state.ts)
+  // rejects it back to exploring
+  public plan: string | undefined
   public toolsBeforePlanMode: string[] | undefined
-
-  public get plan(): string | undefined {
-    return isApprovePhase(this.phase) ? this.phase.plan : undefined
-  }
 
   public enter(pi: ExtensionAPI, ctx: ExtensionContext, options?: EnterOptions): void {
     ensureBorderTint(ctx)
@@ -197,7 +203,7 @@ export class PlanningMode extends Mode {
   public completePlan(params: PlanCompletionParams): string {
     const parsed = normalizePlanCompletion(params.plan)
     if (!parsed.ok) throw new Error(parsed.error)
-    this.phase = this.phase.submitPlan(parsed.plan)
+    this.plan = parsed.plan
     return parsed.plan
   }
 
@@ -223,21 +229,12 @@ export class PlanningMode extends Mode {
 
   // The agent_settled menu is owed while a plan is staged
   public shouldPromptApproval(): boolean {
-    return isApprovePhase(this.phase)
+    return this.plan !== undefined
   }
 
-  // The approval menu opened: back to exploring, plan in hand only inside the
+  // The approval menu opened: the plan leaves the field and lives only in the
   // menu - a refined plan re-enters approval via plan_complete
   public rejectApproval(): void {
-    this.phase = new ExplorePhase()
+    this.plan = undefined
   }
-}
-
-// Type guards so callers narrow without reaching for the classes
-export function isPlanningMode(mode: Mode): mode is PlanningMode {
-  return mode instanceof PlanningMode
-}
-
-export function isDefaultMode(mode: Mode): mode is DefaultMode {
-  return mode instanceof DefaultMode
 }

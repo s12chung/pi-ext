@@ -1,8 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent"
-import { DefaultMode, type Mode, PlanningMode, isDefaultMode, isPlanningMode } from "../mode.ts"
-import { ApprovePhase, isApprovePhase } from "../phases.ts"
+import { DefaultMode, type Mode, PlanningMode } from "../mode.ts"
 import { PLAN, entryBase, planCompleteResult, stateEntry, userEntry } from "../utils/fixtures.ts"
 import { decodeSession } from "./decode.ts"
 import {
@@ -17,32 +16,30 @@ import {
 const restoreFromEntries = (entries: SessionEntry[]): Mode => restoreMode(decodeSession(entries))
 
 test("returns default when no state entry exists", () => {
-  assert.ok(isDefaultMode(restoreFromEntries([])))
+  assert.ok(restoreFromEntries([]).isDefault())
   assert.ok(
-    isDefaultMode(restoreFromEntries([{ type: "custom", customType: "plan-mode", ...entryBase }])),
+    restoreFromEntries([{ type: "custom", customType: "plan-mode", ...entryBase }]).isDefault(),
   )
 })
 
 test("restores a planning state in approval with its plan", () => {
   const mode = restoreFromEntries(
-    stateEntry({ mode: "planning", phase: "approval", plan: PLAN, toolsBeforePlanMode: ["read"] }),
+    stateEntry({ mode: "planning", plan: PLAN, toolsBeforePlanMode: ["read"] }),
   )
-  assert.ok(isPlanningMode(mode))
-  assert.ok(isApprovePhase(mode.phase))
+  assert.ok(mode.isPlanning())
   assert.equal(mode.plan, PLAN)
   assert.deepEqual(mode.toolsBeforePlanMode, ["read"])
 })
 
 test("restores an explore planning state without a plan", () => {
-  const mode = restoreFromEntries(stateEntry({ mode: "planning", phase: "explore" }))
-  assert.ok(isPlanningMode(mode))
-  assert.ok(!isApprovePhase(mode.phase))
+  const mode = restoreFromEntries(stateEntry({ mode: "planning" }))
+  assert.ok(mode.isPlanning())
   assert.equal(mode.plan, undefined)
 })
 
 test("restores a handoff default state with activePlan", () => {
   const mode = restoreFromEntries(stateEntry({ mode: "default", activePlan: PLAN }))
-  assert.ok(isDefaultMode(mode))
+  assert.ok(mode.isDefault())
   assert.equal(mode.activePlan, PLAN)
   assert.equal(mode.toolsBeforePlanMode, undefined)
 })
@@ -50,13 +47,12 @@ test("restores a handoff default state with activePlan", () => {
 test("recovers the plan from a plan_complete toolResult after the state entry", () => {
   const mode = restoreFromEntries(
     stateEntry(
-      { mode: "planning", phase: "explore" },
+      { mode: "planning" },
       planCompleteResult({ version: 1, source: "plan_complete", plan: PLAN }),
     ),
   )
-  assert.ok(isPlanningMode(mode))
+  assert.ok(mode.isPlanning())
   assert.equal(mode.plan, PLAN)
-  assert.ok(isApprovePhase(mode.phase))
 })
 
 test("ignores plan_complete toolResults before the state entry", () => {
@@ -64,7 +60,7 @@ test("ignores plan_complete toolResults before the state entry", () => {
     planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. Old" }),
     ...stateEntry({ mode: "planning" }),
   ])
-  assert.ok(isPlanningMode(mode))
+  assert.ok(mode.isPlanning())
   assert.equal(mode.plan, undefined)
 })
 
@@ -80,19 +76,16 @@ test("newest plan_complete toolResult wins", () => {
 
 test("invalid persisted plan falls back to toolResult recovery", () => {
   const entries = stateEntry(
-    { mode: "planning", phase: "approval", plan: "  " },
+    { mode: "planning", plan: "  " },
     planCompleteResult({ version: 1, source: "plan_complete", plan: PLAN }),
   )
   assert.equal((restoreFromEntries(entries) as PlanningMode).plan, PLAN)
 })
 
 test("persisted plan without phase headings is ignored", () => {
-  const mode = restoreFromEntries(
-    stateEntry({ mode: "planning", phase: "approval", plan: "just prose" }),
-  )
-  assert.ok(isPlanningMode(mode))
+  const mode = restoreFromEntries(stateEntry({ mode: "planning", plan: "just prose" }))
+  assert.ok(mode.isPlanning())
   assert.equal(mode.plan, undefined)
-  assert.ok(!isApprovePhase(mode.phase))
 })
 
 test("default state ignores a persisted planning plan", () => {
@@ -135,19 +128,18 @@ test("migrates the pre-mode-objects enabled shape", () => {
   const planning = restoreFromEntries(
     stateEntry({ enabled: true, plan: PLAN, toolsBeforePlanMode: ["read"] }),
   )
-  assert.ok(isPlanningMode(planning))
-  assert.ok(isApprovePhase(planning.phase))
+  assert.ok(planning.isPlanning())
   assert.equal(planning.plan, PLAN)
   assert.deepEqual(planning.toolsBeforePlanMode, ["read"])
 
   const handoff = restoreFromEntries(stateEntry({ enabled: false, activePlan: PLAN }))
-  assert.ok(isDefaultMode(handoff))
+  assert.ok(handoff.isDefault())
   assert.equal(handoff.activePlan, PLAN)
 })
 
 test("toState round-trips through restoreMode", () => {
   const planning = new PlanningMode()
-  planning.phase = new ApprovePhase(PLAN)
+  planning.plan = PLAN
   planning.toolsBeforePlanMode = ["read"]
   assert.deepEqual(restoreFromEntries(stateEntry(planning.toState())).toState(), planning.toState())
 
@@ -157,7 +149,7 @@ test("toState round-trips through restoreMode", () => {
 
 function planningWithPlan(): PlanningMode {
   const planning = new PlanningMode()
-  planning.phase = new ApprovePhase(PLAN)
+  planning.plan = PLAN
   return planning
 }
 
@@ -207,7 +199,7 @@ test("setMode swaps, enters, and persists the successor", () => {
   const planning = slot.mode as PlanningMode
   planning.toolsBeforePlanMode = ["read"]
   setMode(pi, ctx, slot, planning.next())
-  assert.ok(isDefaultMode(slot.mode))
+  assert.ok(slot.mode.isDefault())
   assert.deepEqual(entries, [
     { mode: "default", activePlan: undefined, toolsBeforePlanMode: ["read"] },
   ])
@@ -216,7 +208,7 @@ test("setMode swaps, enters, and persists the successor", () => {
 test("approval menu: stay opens the refinement editor, empty keeps planning", async () => {
   const { pi, ctx, slot, entries, sent } = approvalFixture("Stay and refine the plan")
   await promptPlanApproval(pi, ctx, undefined, slot)
-  assert.ok(isPlanningMode(slot.mode))
+  assert.ok(slot.mode.isPlanning())
   assert.deepEqual(entries, [])
   assert.deepEqual(sent, [])
 })
@@ -224,7 +216,7 @@ test("approval menu: stay opens the refinement editor, empty keeps planning", as
 test("approval menu: exit swaps to default and persists", async () => {
   const { pi, ctx, slot, entries } = approvalFixture("Exit plan mode (plan stays in context)")
   await promptPlanApproval(pi, ctx, undefined, slot)
-  assert.ok(isDefaultMode(slot.mode))
+  assert.ok(slot.mode.isDefault())
   assert.equal(entries.length, 1)
   assert.equal((entries[0] as { mode: string }).mode, "default")
 })
@@ -234,7 +226,7 @@ test("approval menu: stay sends the refinement as a follow-up", async () => {
     editor: () => Promise.resolve("make it faster"),
   })
   await promptPlanApproval(pi, ctx, undefined, slot)
-  assert.ok(isPlanningMode(slot.mode))
+  assert.ok(slot.mode.isPlanning())
   assert.deepEqual(sent, [{ customType: "user", content: "make it faster" }])
 })
 
@@ -245,7 +237,7 @@ test("approval menu: bails when the session was replaced while open", async () =
     },
   })
   await promptPlanApproval(pi, ctx, undefined, slot)
-  assert.ok(isPlanningMode(slot.mode))
+  assert.ok(slot.mode.isPlanning())
   assert.deepEqual(entries, [])
 })
 
@@ -253,12 +245,12 @@ test("approval menu: bails when the plan was superseded while open", async () =>
   const { pi, ctx, slot, entries } = approvalFixture("Exit plan mode (plan stays in context)", {
     onMenu: () => {
       const superseded = planningWithPlan()
-      superseded.phase = new ApprovePhase("## 1. Reworked\nA different plan.")
+      superseded.plan = "## 1. Reworked\nA different plan."
       slot.mode = superseded
     },
   })
   await promptPlanApproval(pi, ctx, undefined, slot)
-  assert.ok(isPlanningMode(slot.mode))
+  assert.ok(slot.mode.isPlanning())
   assert.deepEqual(entries, [])
 })
 
@@ -282,7 +274,7 @@ test("presentApproval swallows stale-context errors and rethrows others", async 
     "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx.",
   )
   await presentApproval(pi, ctx, undefined, slot)
-  assert.ok(isPlanningMode(slot.mode))
+  assert.ok(slot.mode.isPlanning())
   assert.deepEqual(entries, [])
 
   thrown = new Error("boom")

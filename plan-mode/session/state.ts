@@ -11,8 +11,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
-import { DefaultMode, type EnterOptions, type Mode, PlanningMode, isPlanningMode } from "../mode.ts"
-import { ApprovePhase, isApprovePhase } from "../phases.ts"
+import { DefaultMode, type EnterOptions, type Mode, PlanningMode } from "../mode.ts"
 import type { DecodedSession } from "./decode.ts"
 import {
   isCommandContext,
@@ -47,8 +46,7 @@ function restorePlanning(state: PlanModeState, recoveredPlan: string | undefined
   const planning = new PlanningMode()
   planning.toolsBeforePlanMode = state.toolsBeforePlanMode
   // The menu is owed again after restore: it re-opens on the next settle
-  const plan = state.plan ?? recoveredPlan
-  if (plan) planning.phase = new ApprovePhase(plan)
+  planning.plan = state.plan ?? recoveredPlan
   return planning
 }
 
@@ -90,11 +88,11 @@ export async function promptPlanApproval(
   slot: ModeSlot,
 ): Promise<void> {
   const planning = slot.mode
-  if (!isPlanningMode(planning) || !planning.plan) return
+  if (!planning.isPlanning() || !planning.plan) return
 
   const menuRev = slot.rev
   const menuPlan = planning.plan
-  // Opening the menu consumes the approval phase - a later settle (queued
+  // Opening the menu consumes the staged plan - a later settle (queued
   // follow-up delivered, refine turn) must not re-stack the picker, and
   // rejection simply rests back in explore
   // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (readyPresentationIntent)
@@ -112,7 +110,7 @@ export async function promptPlanApproval(
   // while this menu was open - let that one present itself instead.
   // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (completedPlanIsCurrent)
   const current = slot.mode
-  if (!isPlanningMode(current) || isApprovePhase(current.phase)) return
+  if (!current.isPlanning() || current.plan !== undefined) return
   // Esc on the picker is a plain stay: undefined matches no choice below. The
   // explicit stay opens the refinement editor, where an empty submit stays too.
   if (choice === STAY_CHOICE) await refinePlan(pi, ctx)

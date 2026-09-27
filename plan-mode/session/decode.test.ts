@@ -16,7 +16,7 @@ test("decodeSession returns no state without a plan-mode entry", () => {
 
 test("decodeSession decodes every planning-state field", () => {
   const { state } = decodeSession(
-    stateEntry({ mode: "planning", phase: "approval", plan: PLAN, toolsBeforePlanMode: ["read"] }),
+    stateEntry({ mode: "planning", plan: PLAN, toolsBeforePlanMode: ["read"] }),
   )
   assert.deepEqual(state, {
     mode: "planning",
@@ -50,7 +50,7 @@ test("decodeSession drops invalid field values", () => {
   const { state } = decodeSession(
     stateEntry({
       mode: "planning",
-      phase: "bogus",
+      futureField: "bogus",
       plan: "no headings",
       activePlan: 42,
       toolsBeforePlanMode: ["read", "", 7],

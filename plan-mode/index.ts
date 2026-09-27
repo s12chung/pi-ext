@@ -32,7 +32,7 @@ import type {
   ToolCallEvent,
   ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent"
-import { DefaultMode, completionTool, isDefaultMode, isPlanningMode } from "./mode.ts"
+import { DefaultMode, completionTool } from "./mode.ts"
 import { decodeSession } from "./session/decode.ts"
 import {
   type ModeSlot,
@@ -87,7 +87,7 @@ function planCommand(
       // With a completed plan, bare /plan reopens the approval menu instead of
       // toggling the plan away (the picker's exit choice is the way out)
       // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (/plan showCurrent)
-      if (isPlanningMode(state.modeSlot.mode) && state.modeSlot.mode.plan && ctx.hasUI) {
+      if (state.modeSlot.mode.isPlanning() && state.modeSlot.mode.plan && ctx.hasUI) {
         debugLog("/plan reopen")
         await promptPlanApproval(pi, ctx, ctx, state.modeSlot)
         return
@@ -176,9 +176,9 @@ function refreshStateForFirstPrompt(state: PlanModeExtensionState, ctx: Extensio
   if (!state.refreshStateBeforeFirstAgentStart) return
   state.refreshStateBeforeFirstAgentStart = false
   state.modeSlot.mode = restoreMode(decodeSession(ctx.sessionManager.getEntries()))
-  const restoredPlan = isPlanningMode(state.modeSlot.mode)
+  const restoredPlan = state.modeSlot.mode.isPlanning()
     ? state.modeSlot.mode.plan
-    : isDefaultMode(state.modeSlot.mode)
+    : state.modeSlot.mode.isDefault()
       ? state.modeSlot.mode.activePlan
       : undefined
   debugLog("refreshStateForFirstPrompt", { restoredPlan: restoredPlan !== undefined })

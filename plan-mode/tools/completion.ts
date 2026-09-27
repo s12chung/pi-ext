@@ -1,7 +1,7 @@
 /**
  * The plan-complete tool: identity, params/details shapes, definition, and
- * rendering. The format of the plan it carries lives in plan.ts; the phases
- * its execution advances live in phases.ts.
+ * rendering. The format of the plan it carries lives in plan.ts; the staged
+ * plan its execution sets lives on PlanningMode (mode.ts).
  */
 
 import { type ToolDefinition, getMarkdownTheme } from "@earendil-works/pi-coding-agent"
