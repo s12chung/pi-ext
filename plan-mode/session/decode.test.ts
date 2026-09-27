@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { AgentToolResult, SessionEntry } from "@earendil-works/pi-coding-agent"
+import { PLAN, entryBase, planCompleteResult, stateEntry } from "../utils/fixtures.ts"
 import { decodeSession, toolResultText } from "./decode.ts"
-import { PLAN, entryBase, planCompleteResult, stateEntry } from "./fixtures.ts"
 
 test("decodeSession returns no state without a plan-mode entry", () => {
   assert.equal(decodeSession([]).state, undefined)

@@ -5,8 +5,8 @@
  */
 
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { bestEffort, safeErrorDetail } from "./helpers.ts"
-import { DefaultMode } from "./mode.ts"
+import { DefaultMode } from "../mode.ts"
+import { bestEffort, safeErrorDetail } from "../utils/safe.ts"
 
 type NewSessionOptions = NonNullable<Parameters<ExtensionCommandContext["newSession"]>[0]>
 // pi exports ExtensionCommandContext but not the replacement callback's context

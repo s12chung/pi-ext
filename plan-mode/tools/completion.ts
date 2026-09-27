@@ -6,10 +6,10 @@
 
 import { type ToolDefinition, getMarkdownTheme } from "@earendil-works/pi-coding-agent"
 import { Markdown } from "@earendil-works/pi-tui"
-import { toolResultText } from "./decode.ts"
-import type { Mode } from "./mode.ts"
+import type { Mode } from "../mode.ts"
+import { toolResultText } from "../session/decode.ts"
+import { PLAN_COMPLETE_TOOL_NAME, PLAN_COMPLETE_VERSION } from "./names.ts"
 import { PLAN_FORMAT_DESCRIPTION } from "./plan.ts"
-import { PLAN_COMPLETE_TOOL_NAME, PLAN_COMPLETE_VERSION } from "./tools.ts"
 
 // Source (adapted: plan_mode_complete/plan string → plan_complete/plan markdown
 // with format validation and phase-title extraction):

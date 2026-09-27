@@ -11,14 +11,14 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
+import { DefaultMode, type EnterOptions, type Mode, PlanningMode, isPlanningMode } from "../mode.ts"
+import { ApprovePhase, isApprovePhase } from "../phases.ts"
 import type { DecodedSession } from "./decode.ts"
 import {
   isCommandContext,
   isStaleExtensionContextError,
   startFreshImplementation,
 } from "./fresh-implementation.ts"
-import { DefaultMode, type EnterOptions, type Mode, PlanningMode, isPlanningMode } from "./mode.ts"
-import { ApprovePhase, isApprovePhase } from "./phases.ts"
 
 export interface PlanModeState {
   mode: "default" | "planning"

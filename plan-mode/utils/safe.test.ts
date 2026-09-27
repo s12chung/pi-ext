@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { bestEffort, safeErrorDetail } from "./helpers.ts"
+import { bestEffort, safeErrorDetail } from "./safe.ts"
 
 test("bestEffort reports whether the operation landed", () => {
   assert.equal(

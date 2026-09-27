@@ -25,7 +25,7 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui"
 import { Type } from "typebox"
-import { QUESTIONNAIRE_TOOL_NAME } from "./tools.ts"
+import { QUESTIONNAIRE_TOOL_NAME } from "./names.ts"
 
 // Types
 interface QuestionOption {

@@ -5,7 +5,7 @@ import {
   getPlanModeTools,
   unsafeCommandReason,
   withRequiredPlanModeTools,
-} from "./utils.ts"
+} from "./tool-set.ts"
 
 // pi auto-activates every registerTool() call, so a normal-mode startup set carries
 // plan_complete and the bundled questionnaire tool alongside the ordinary tools

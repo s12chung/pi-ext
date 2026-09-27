@@ -32,17 +32,17 @@ import type {
   ToolCallEvent,
   ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent"
-import { decodeSession } from "./decode.ts"
 import { DefaultMode, completionTool, isDefaultMode, isPlanningMode } from "./mode.ts"
-import { questionnaireTool } from "./questionnaire.ts"
+import { decodeSession } from "./session/decode.ts"
 import {
   type ModeSlot,
   presentApproval,
   promptPlanApproval,
   restoreMode,
   setMode,
-} from "./state.ts"
-import { debugLog } from "./utils.ts"
+} from "./session/state.ts"
+import { questionnaireTool } from "./tools/questionnaire.ts"
+import { debugLog } from "./utils/debug.ts"
 
 // The mutable state the registration helpers share: the live mode with its
 // session-replacement counter, the freshest command context, and the

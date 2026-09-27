@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent"
+import { DefaultMode, type Mode, PlanningMode, isDefaultMode, isPlanningMode } from "../mode.ts"
+import { ApprovePhase, isApprovePhase } from "../phases.ts"
+import { PLAN, entryBase, planCompleteResult, stateEntry, userEntry } from "../utils/fixtures.ts"
 import { decodeSession } from "./decode.ts"
-import { PLAN, entryBase, planCompleteResult, stateEntry, userEntry } from "./fixtures.ts"
-import { DefaultMode, type Mode, PlanningMode, isDefaultMode, isPlanningMode } from "./mode.ts"
-import { ApprovePhase, isApprovePhase } from "./phases.ts"
 import {
   type ModeSlot,
   presentApproval,

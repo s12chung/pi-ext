@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { AgentMessage } from "@earendil-works/pi-agent-core"
-import { PLAN } from "./fixtures.ts"
 import { DefaultMode, type Mode, PlanningMode, isDefaultMode, isPlanningMode } from "./mode.ts"
 import { isApprovePhase } from "./phases.ts"
+import { PLAN } from "./utils/fixtures.ts"
 
 test("toggle round-trips and carries the tool snapshot to default", () => {
   const planning = new DefaultMode().next()

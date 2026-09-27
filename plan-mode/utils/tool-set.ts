@@ -1,25 +1,9 @@
 /**
- * Plan-mode utilities: env-gated trace logging, bash allowlist, and
- * active-tool-set selection.
+ * Bash allowlist and active-tool-set selection: destructive-command detection,
+ * the safe read-only list, and keeping the plan-only helpers out of normal mode.
  */
 
-import { appendFileSync } from "node:fs"
-import type { JsonValue } from "@earendil-works/pi-ai"
-import { PLAN_COMPLETE_TOOL_NAME, QUESTIONNAIRE_TOOL_NAME } from "./tools.ts"
-
-// Env-gated trace for menu/handoff diagnosis: PLAN_MODE_DEBUG=<file> pi ...
-export function debugLog(event: string, data?: JsonValue): void {
-  const path = process.env.PLAN_MODE_DEBUG
-  if (!path) return
-  try {
-    appendFileSync(
-      path,
-      `${new Date().toISOString()} ${event}${data === undefined ? "" : ` ${JSON.stringify(data)}`}\n`,
-    )
-  } catch {
-    // diagnostics must never break the session
-  }
-}
+import { PLAN_COMPLETE_TOOL_NAME, QUESTIONNAIRE_TOOL_NAME } from "../tools/names.ts"
 
 // Destructive commands blocked in plan mode
 const DESTRUCTIVE_PATTERNS = [
@@ -126,7 +110,7 @@ export function unsafeCommandReason(command: string): string | undefined {
 }
 
 // pi auto-activates every registerTool() call with no opt-out flag, so plan_complete
-// (and questionnaire, bundled in ./questionnaire.ts from pi's example)
+// (and questionnaire, bundled in tools/questionnaire.ts from pi's example)
 // leaks into the active set at startup. narumiruna's required-helpers pattern keeps them
 // plan-mode-only so their schemas cannot pollute normal-mode context and make the model
 // think it is planning.

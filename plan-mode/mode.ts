@@ -10,17 +10,17 @@ import type {
   ExtensionContext,
   ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent"
-import { ensureBorderTint, setPlanBorderActive } from "./border-tint.ts"
-import { type PlanCompletionParams } from "./completion-tool.ts"
 import { ExplorePhase, type PlanningPhaseState, isApprovePhase } from "./phases.ts"
-import { normalizePlanCompletion } from "./plan.ts"
-import type { PlanModeState } from "./state.ts"
-import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils.ts"
+import type { PlanModeState } from "./session/state.ts"
+import { type PlanCompletionParams } from "./tools/completion.ts"
+import { normalizePlanCompletion } from "./tools/plan.ts"
+import { ensureBorderTint, setPlanBorderActive } from "./ui/border-tint.ts"
+import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils/tool-set.ts"
 
 // The tool definition lives with the tool whose execution advances the phases
-// (completion-tool.ts); re-exported so index.ts wires modes without importing
+// (tools/completion.ts); re-exported so index.ts wires modes without importing
 // completion internals
-export { completionTool } from "./completion-tool.ts"
+export { completionTool } from "./tools/completion.ts"
 
 // The [PLAN MODE ACTIVE] prompt injected before every planning agent start.
 // Initial understanding, plan format, read-only override, and
@@ -158,7 +158,7 @@ export class DefaultMode extends Mode {
 
 export class PlanningMode extends Mode {
   // PLANNING_PHASE state, stored here: explore until plan_complete, approval
-  // after - the phases themselves are completion-tool.ts's interface
+  // after - the phases themselves are tools/completion.ts's interface
   public phase: PlanningPhaseState = new ExplorePhase()
   public toolsBeforePlanMode: string[] | undefined
 

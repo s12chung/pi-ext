@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent"
-import { type PlanCompletionDetails, completionTool } from "./completion-tool.ts"
-import { PlanningMode } from "./mode.ts"
+import { PlanningMode } from "../mode.ts"
+import { type PlanCompletionDetails, completionTool } from "./completion.ts"
 
 const PLAN =
   "## 1. Core\nSwap the field.\n\n## 2. Rendering\nHook up the consumer.\n\n## 3. Verification\nmake test."
