@@ -26,9 +26,10 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 
 ## Commands
 
-| Command | Action                                                              |
-| ------- | ------------------------------------------------------------------- |
-| `/plan` | Toggle plan mode; with a completed plan, reopen the approval picker |
+| Command      | Action                                                              |
+| ------------ | ------------------------------------------------------------------- |
+| `/plan`      | Toggle plan mode; with a completed plan, reopen the approval picker |
+| `/plan exec` | Run the completed plan in a fresh implementation session            |
 
 ## Persistence and recovery
 

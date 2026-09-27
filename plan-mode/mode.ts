@@ -82,13 +82,10 @@ export abstract class Mode {
 }
 
 export class DefaultMode extends Mode {
-  // Plan handed off for execution in this session, if any
-  public readonly activePlan: string | undefined
   public readonly toolsBeforePlanMode: string[] | undefined
 
-  public constructor(activePlan?: string, toolsBeforePlanMode?: string[]) {
+  public constructor(toolsBeforePlanMode?: string[]) {
     super()
-    this.activePlan = activePlan
     this.toolsBeforePlanMode = toolsBeforePlanMode
   }
 
@@ -112,7 +109,6 @@ export class DefaultMode extends Mode {
   public toState(): PlanModeState {
     return {
       mode: "default",
-      activePlan: this.activePlan,
       toolsBeforePlanMode: this.toolsBeforePlanMode,
     }
   }
@@ -121,7 +117,7 @@ export class DefaultMode extends Mode {
 export class PlanningMode extends Mode {
   // The phase is the staged plan itself: undefined explores, a string owes its
   // approval menu - plan_complete stages it, the menu resolution (state.ts)
-  // rejects it back to exploring
+  // unstages it back to exploring
   public plan: string | undefined
   public toolsBeforePlanMode: string[] | undefined
 
@@ -139,7 +135,7 @@ export class PlanningMode extends Mode {
       ctx.ui.notify("Plan mode enabled. Built-in write tools disabled.")
   }
 
-  public next = (): Mode => new DefaultMode(undefined, this.toolsBeforePlanMode)
+  public next = (): Mode => new DefaultMode(this.toolsBeforePlanMode)
 
   public toState(): PlanModeState {
     return {
@@ -167,9 +163,10 @@ export class PlanningMode extends Mode {
   // The agent_settled menu is owed while a plan is staged
   public shouldPromptApproval = (): boolean => this.plan !== undefined
 
-  // The approval menu opened: the plan leaves the field and lives only in the
-  // menu - a refined plan re-enters approval via plan_complete
-  public rejectApproval(): void {
+  // Handing the plan to its approval menu unstages it: the field wipes and
+  // the phase rests in explore until a refined plan re-enters approval via
+  // plan_complete
+  public unstagePlan(): void {
     this.plan = undefined
   }
 }

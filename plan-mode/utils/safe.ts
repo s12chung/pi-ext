@@ -16,6 +16,12 @@ export function bestEffort(operation: () => void): boolean {
   }
 }
 
+// Whether a real Error's message contains any of the fragments - for
+// matching known failure text without trusting the thrown value's shape
+export function errorIncludes(error: unknown, fragments: string[]): boolean {
+  return error instanceof Error && fragments.some((fragment) => error.message.includes(fragment))
+}
+
 // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (safeErrorDetail)
 export function safeErrorDetail(error: unknown): string {
   const flat =

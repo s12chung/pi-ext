@@ -1,6 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { bestEffort, safeErrorDetail } from "./safe.ts"
+import { bestEffort, errorIncludes, safeErrorDetail } from "./safe.ts"
+
+test("errorIncludes matches any fragment in a real Error's message", () => {
+  assert.equal(errorIncludes(new Error("ctx is stale after reload"), ["stale after reload"]), true)
+  assert.equal(errorIncludes(new Error("unrelated"), ["stale", "no longer active"]), false)
+  assert.equal(errorIncludes("stale after reload", ["stale after reload"]), false)
+  assert.equal(errorIncludes(new Error("any"), []), false)
+})
 
 test("bestEffort reports whether the operation landed", () => {
   assert.equal(

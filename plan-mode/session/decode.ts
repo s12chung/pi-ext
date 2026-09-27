@@ -45,7 +45,6 @@ function decodeStateData(data: unknown): PlanModeState | undefined {
   return {
     mode: planning ? "planning" : "default",
     plan: decodedPlan(data.plan),
-    activePlan: decodedPlan(data.activePlan),
     toolsBeforePlanMode: decodedStringArray(data.toolsBeforePlanMode),
   }
 }

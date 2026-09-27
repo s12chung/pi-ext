@@ -27,68 +27,66 @@ import type {
   RegisteredCommand,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent"
-import { DefaultMode, completionTool } from "./mode.ts"
+import { DefaultMode, type Mode, completionTool } from "./mode.ts"
 import { decodeSession } from "./session/decode.ts"
 import { safeSetSection } from "./session/prompt.ts"
-import {
-  type ModeSlot,
-  presentApproval,
-  promptPlanApproval,
-  restoreMode,
-  setMode,
-} from "./session/state.ts"
+import { promptPlanApproval, restoreMode, setMode, startFreshHandoff } from "./session/state.ts"
 import { questionnaireTool } from "./tools/questionnaire.ts"
 import { debugLog } from "./utils/debug.ts"
 
-// The mutable state the registration helpers share: the live mode with its
-// session-replacement counter, the freshest command context, and the
-// deferred-refresh flag
+// The mutable state the registration helpers share: the live mode and the
+// freshest command context
 interface PlanModeExtensionState {
-  modeSlot: ModeSlot
+  mode: Mode
   latestCommandContext: ExtensionCommandContext | undefined
-  refreshStateBeforeFirstAgentStart: boolean
 }
 
 export default function planModeExtension(pi: ExtensionAPI): void {
   const state: PlanModeExtensionState = {
-    modeSlot: { mode: new DefaultMode(), rev: 0 },
+    mode: new DefaultMode(),
     latestCommandContext: undefined,
-    refreshStateBeforeFirstAgentStart: false,
   }
 
   // Questionnaire visibility is toggled by the required-helpers block in
   // utils.ts (plan-mode only)
   pi.registerTool(questionnaireTool())
-  pi.registerTool(completionTool(() => state.modeSlot.mode))
+  pi.registerTool(completionTool(() => state.mode))
   pi.registerCommand("plan", planCommand(pi, state))
 
   registerAgentEventHandlers(pi, state)
   registerSessionHandlers(pi, state)
 }
 
+// only via. a command, we can store the ctx, so no hotkeys or `--plan flags
 function planCommand(
   pi: ExtensionAPI,
   state: PlanModeExtensionState,
 ): Omit<RegisteredCommand, "name" | "sourceInfo"> {
   return {
-    // pi grants newSession() (and fork/switch/reload) only to command-handler
-    // contexts - it creates them solely when executing an extension command and
-    // inside withSession (runner.js createCommandContext has no other callers).
-    // Events, tools, and shortcuts can therefore never start a session, which is
-    // why /plan is the only plan-mode entry point and the fresh handoff below
-    // bounces through it when the captured context is missing.
-    description: "Toggle plan mode (read-only exploration)",
-    handler: async (_args, ctx) => {
+    description:
+      "Toggle plan mode (read-only exploration); /plan exec starts a fresh implementation session",
+    handler: async (args, ctx) => {
       state.latestCommandContext = ctx
+      if (args.trim() === "exec") {
+        const mode = state.mode
+        if (!mode.isPlanning() || mode.plan === undefined) {
+          ctx.ui.notify("No completed plan to execute. Complete a plan in plan mode first.", "info")
+          return
+        }
+        const plan = mode.plan
+        mode.unstagePlan()
+        await startFreshHandoff(pi, ctx, ctx, mode, plan)
+        return
+      }
       // With a completed plan, bare /plan reopens the approval menu instead of
       // toggling the plan away (the picker's exit choice is the way out)
       // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (/plan showCurrent)
-      if (state.modeSlot.mode.isPlanning() && state.modeSlot.mode.plan && ctx.hasUI) {
+      if (state.mode.isPlanning() && state.mode.plan && ctx.hasUI) {
         debugLog("/plan reopen")
-        await promptPlanApproval(pi, ctx, ctx, state.modeSlot)
+        state.mode = await promptPlanApproval(pi, ctx, ctx, state.mode)
         return
       }
-      setMode(pi, ctx, state.modeSlot, state.modeSlot.mode.next())
+      state.mode = setMode(pi, ctx, state.mode.next())
     },
   }
 }
@@ -96,12 +94,11 @@ function planCommand(
 function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionState): void {
   // Install the mode's system-prompt section for the upcoming run; pi diffs
   // it in on the first planning run and out on the next default run
-  pi.on("before_agent_start", (event: BeforeAgentStartEvent, ctx: ExtensionContext): void => {
-    refreshStateForFirstPrompt(state, ctx)
-    safeSetSection(state.modeSlot.mode.systemPrompt(), event.systemPromptOptions.sections)
+  pi.on("before_agent_start", (event: BeforeAgentStartEvent, _ctx: ExtensionContext): void => {
+    safeSetSection(state.mode.systemPrompt(), event.systemPromptOptions.sections)
   })
 
-  pi.on("agent_end", (): void => state.modeSlot.mode.onAgentEnd(pi))
+  pi.on("agent_end", (): void => state.mode.onAgentEnd(pi))
 
   // Present the approval menu once the agent truly settles - not between a
   // turn end and delivery of still-queued follow-up messages, which would
@@ -110,24 +107,21 @@ function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionSt
   pi.on(
     "agent_settled",
     async (_event: AgentSettledEvent, ctx: ExtensionContext): Promise<void> => {
-      if (!ctx.hasUI || !state.modeSlot.mode.shouldPromptApproval()) return
+      if (!ctx.hasUI || !state.mode.shouldPromptApproval()) return
       if (!ctx.isIdle() || ctx.hasPendingMessages()) return
       debugLog("agent_settled menu", { idle: true, pending: ctx.hasPendingMessages() })
-      await presentApproval(pi, ctx, state.latestCommandContext, state.modeSlot)
+      state.mode = await promptPlanApproval(pi, ctx, state.latestCommandContext, state.mode)
     },
   )
 }
 
 function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState): void {
-  // Runs before dispose() invalidates this instance's contexts: retire the
-  // deferred status refreshes and editor re-checks so nothing fires on a
-  // stale ctx afterwards
+  // Runs before dispose() invalidates this instance's contexts: drop the
+  // captured command context so nothing fires on a stale ctx afterwards
   // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (session_shutdown)
   pi.on("session_shutdown", (): void => {
     debugLog("session_shutdown")
     state.latestCommandContext = undefined
-    state.modeSlot.rev += 1
-    state.refreshStateBeforeFirstAgentStart = false
   })
 
   // Restore state on session start/resume from session memory (appendEntry).
@@ -136,27 +130,7 @@ function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState
   pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext): void => {
     debugLog("session_start", { reason: event.reason })
     state.latestCommandContext = undefined
-    state.modeSlot.rev += 1
-    // A fresh session receives its handed-off plan entry via newSession's
-    // setup callback, after session_start, so the restore below misses it
-    // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (refreshStateBeforeFirstAgentStart)
-    state.refreshStateBeforeFirstAgentStart = event.reason === "new"
-    state.modeSlot.mode = restoreMode(decodeSession(ctx.sessionManager.getEntries()))
-    state.modeSlot.mode.enter(pi, ctx, { notify: false })
+    state.mode = restoreMode(decodeSession(ctx.sessionManager.getEntries()))
+    state.mode.enter(pi, ctx, { notify: false })
   })
-}
-
-// Picks up the handed-off plan that newSession's setup appended after the
-// fresh session's session_start had already restored state
-// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (refreshStateForFirstPrompt)
-function refreshStateForFirstPrompt(state: PlanModeExtensionState, ctx: ExtensionContext): void {
-  if (!state.refreshStateBeforeFirstAgentStart) return
-  state.refreshStateBeforeFirstAgentStart = false
-  state.modeSlot.mode = restoreMode(decodeSession(ctx.sessionManager.getEntries()))
-  const restoredPlan = state.modeSlot.mode.isPlanning()
-    ? state.modeSlot.mode.plan
-    : state.modeSlot.mode.isDefault()
-      ? state.modeSlot.mode.activePlan
-      : undefined
-  debugLog("refreshStateForFirstPrompt", { restoredPlan: restoredPlan !== undefined })
 }

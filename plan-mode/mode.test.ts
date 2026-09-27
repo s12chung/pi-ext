@@ -12,14 +12,6 @@ test("toggle round-trips and carries the tool snapshot to default", () => {
   const back = planning.next()
   assert.ok(back.isDefault())
   assert.deepEqual(back.toolsBeforePlanMode, ["read", "bash"])
-  assert.equal(back.activePlan, undefined)
-})
-
-test("DefaultMode hands its activePlan to a fresh planning mode's discard", () => {
-  const handoff = new DefaultMode(PLAN)
-  const planning = handoff.next()
-  assert.ok(planning.isPlanning())
-  assert.equal(planning.plan, undefined)
 })
 
 test("completePlan validates before staging the plan", () => {
@@ -39,8 +31,8 @@ test("shouldPromptApproval only while a plan is staged", () => {
   planning.completePlan({ plan: PLAN })
   assert.equal(planning.shouldPromptApproval(), true)
 
-  // Opening the menu consumes the staged plan: rejection rests in explore
-  planning.rejectApproval()
+  // Opening the menu unstages the plan: rejection rests in explore
+  planning.unstagePlan()
   assert.equal(planning.shouldPromptApproval(), false)
   assert.equal(planning.plan, undefined)
 
@@ -70,12 +62,10 @@ test("PlanningMode returns the plan-mode prompt with the read-only constraint", 
 test("toState shapes carry each mode's own fields", () => {
   assert.deepEqual(new DefaultMode().toState(), {
     mode: "default",
-    activePlan: undefined,
     toolsBeforePlanMode: undefined,
   })
-  assert.deepEqual(new DefaultMode(PLAN, ["read"]).toState(), {
+  assert.deepEqual(new DefaultMode(["read"]).toState(), {
     mode: "default",
-    activePlan: PLAN,
     toolsBeforePlanMode: ["read"],
   })
 

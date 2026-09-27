@@ -11,21 +11,16 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
-import { DefaultMode, type EnterOptions, type Mode, PlanningMode } from "../mode.ts"
+import { DefaultMode, type Mode, PlanningMode } from "../mode.ts"
+import { errorIncludes } from "../utils/safe.ts"
 import type { DecodedSession } from "./decode.ts"
-import {
-  isCommandContext,
-  isStaleExtensionContextError,
-  startFreshImplementation,
-} from "./fresh-implementation.ts"
+import { startFreshImplementation } from "./fresh-implementation.ts"
 
 export interface PlanModeState {
   mode: "default" | "planning"
   // While planning (approval iff present - completePlan is the only
-  // plan-setter); DefaultMode carries activePlan instead
+  // plan-setter)
   plan?: string
-  // Plan handed off for execution in this session, if any
-  activePlan?: string
   toolsBeforePlanMode?: string[]
 }
 
@@ -33,12 +28,7 @@ export interface PlanModeState {
 // https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/state.ts
 export function restoreMode(decoded: DecodedSession): Mode {
   const state = decoded.state
-  if (state?.mode !== "planning") {
-    // Handoff entries carry the plan with plan mode disabled; read it only then,
-    // like activeImplementation in the source.
-    // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/state.ts (restorePlanModeState activeImplementation)
-    return new DefaultMode(state?.activePlan, state?.toolsBeforePlanMode)
-  }
+  if (state?.mode !== "planning") return new DefaultMode(state?.toolsBeforePlanMode)
   return restorePlanning(state, decoded.completionPlan)
 }
 
@@ -50,24 +40,12 @@ function restorePlanning(state: PlanModeState, recoveredPlan: string | undefined
   return planning
 }
 
-// The live session slot index.ts owns: the current mode plus a counter that
-// increments on session replacement, invalidating menus open across the swap
-export interface ModeSlot {
-  mode: Mode
-  rev: number
-}
-
-// Swap the live mode: enter its tools/UI and persist its state
-export function setMode(
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  slot: ModeSlot,
-  next: Mode,
-  options?: EnterOptions,
-): void {
-  slot.mode = next
-  next.enter(pi, ctx, options)
+// Enter the next mode's tools/UI, persist its state, and hand it back for
+// the caller to install as the live mode
+export function setMode(pi: ExtensionAPI, ctx: ExtensionContext, next: Mode): Mode {
+  next.enter(pi, ctx)
   pi.appendEntry("plan-mode", next.toState())
+  return next
 }
 
 // Choice labels are bound to constants and compared with === against the
@@ -77,47 +55,49 @@ const FRESH_CHOICE = "Execute in fresh session"
 const STAY_CHOICE = "Stay and refine the plan"
 const EXIT_CHOICE = "Exit plan mode (plan stays in context)"
 
+// The stale-runtime messages a menu open across a session replacement can
+// throw from ctx calls
+// Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/extension-runtime.ts (isStaleExtensionContextError)
+const STALE_CTX_MESSAGES = [
+  "This extension ctx is stale after session replacement or reload",
+  "Extension context is no longer active",
+]
+
 // Approval picker for a completed plan. Offered with or without a
 // fresh-session context - like narumiruna's ready menu, only the fresh
-// handoff is gated, never the choice itself.
+// handoff is gated, never the choice itself. Returns the mode to keep live:
+// unchanged, or the exit choice's swapped-in default.
 // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (agent_settled latestCommandContext ?? ctx)
 export async function promptPlanApproval(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   freshContext: ExtensionCommandContext | undefined,
-  slot: ModeSlot,
-): Promise<void> {
-  const planning = slot.mode
-  if (!planning.isPlanning() || !planning.plan) return
+  mode: Mode,
+): Promise<Mode> {
+  if (!mode.isPlanning() || !mode.plan) return mode
 
-  const menuRev = slot.rev
-  const menuPlan = planning.plan
-  // Opening the menu consumes the staged plan - a later settle (queued
-  // follow-up delivered, refine turn) must not re-stack the picker, and
-  // rejection simply rests back in explore
+  const menuPlan = mode.plan
+  // Unstaging resets the approval gate - the next agent_settled (queued
+  // follow-up delivered, refine turn) finds no staged plan and pops no menu,
+  // instead of re-stacking the picker
   // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (readyPresentationIntent)
-  planning.rejectApproval()
+  mode.unstagePlan()
 
-  const choice = await ctx.ui.select("Plan mode - what next?", [
-    FRESH_CHOICE,
-    STAY_CHOICE,
-    EXIT_CHOICE,
-  ])
-  if (slot.rev !== menuRev) return
-  // A stale picker must not act on the replacement session's restored mode:
-  // without the rev check its setMode would clobber it before enter() throws
-  // on the stale runtime. A pending approval means a newer submission landed
-  // while this menu was open - let that one present itself instead.
-  // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (completedPlanIsCurrent)
-  const current = slot.mode
-  if (!current.isPlanning() || current.plan !== undefined) return
-  // Esc on the picker is a plain stay: undefined matches no choice below. The
-  // explicit stay opens the refinement editor, where an empty submit stays too.
-  if (choice === STAY_CHOICE) await refinePlan(pi, ctx)
-  if (choice === EXIT_CHOICE) setMode(pi, ctx, slot, current.next())
-  if (choice === FRESH_CHOICE) {
-    await startFreshHandoff(pi, ctx, freshContext, slot, current, menuPlan)
+  try {
+    const choice = await ctx.ui.select("Plan mode - what next?", [
+      FRESH_CHOICE,
+      STAY_CHOICE,
+      EXIT_CHOICE,
+    ])
+    // Esc on the picker is a plain stay: undefined matches no choice below. The
+    // explicit stay opens the refinement editor, where an empty submit stays too.
+    if (choice === STAY_CHOICE) await refinePlan(pi, ctx)
+    if (choice === EXIT_CHOICE) return setMode(pi, ctx, mode.next())
+    if (choice === FRESH_CHOICE) await startFreshHandoff(pi, ctx, freshContext, mode, menuPlan)
+  } catch (error: unknown) {
+    if (!errorIncludes(error, STALE_CTX_MESSAGES)) throw error
   }
+  return mode
 }
 
 async function refinePlan(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
@@ -125,21 +105,22 @@ async function refinePlan(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void
   if (refinement?.trim()) pi.sendUserMessage(refinement.trim(), { deliverAs: "followUp" })
 }
 
-async function startFreshHandoff(
+export async function startFreshHandoff(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   freshContext: ExtensionCommandContext | undefined,
-  slot: ModeSlot,
   current: PlanningMode,
   menuPlan: string,
 ): Promise<void> {
-  // No command context means no newSession() (see index.ts's
-  // createCommandContext note) - prefill /plan, which runs with one and
-  // reopens this picker ready for the handoff
+  // No command context means no newSession(). Restage the plan the menu
+  // consumed so /plan exec lands on a command context that starts the
+  // session directly; until then a settle re-presents the menu, like a
+  // session restored owing one
   if (!freshContext) {
-    ctx.ui.setEditorText("/plan")
+    current.plan = menuPlan
+    ctx.ui.setEditorText("/plan exec")
     ctx.ui.notify(
-      "Fresh sessions can only be started from a command - /plan is in the editor, press Enter and pick fresh execution again.",
+      "Fresh sessions can only be started from a command - /plan exec is in the editor, press Enter to start it.",
       "info",
     )
     return
@@ -147,26 +128,4 @@ async function startFreshHandoff(
   pi.appendEntry("plan-mode", current.toState())
   // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationSession)
   await startFreshImplementation(freshContext, menuPlan)
-}
-
-// Present the approval menu from an event context: resolve the fresh-session
-// handoff context from the latest command context, and tolerate the stale
-// contexts a menu can outlive.
-export async function presentApproval(
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  latestCommandContext: ExtensionCommandContext | undefined,
-  slot: ModeSlot,
-): Promise<void> {
-  // Fresh-session handoff needs a command context - agent_settled's ctx has no newSession.
-  // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (latestCommandContext)
-  const freshContext =
-    latestCommandContext !== undefined && isCommandContext(latestCommandContext)
-      ? latestCommandContext
-      : undefined
-  try {
-    await promptPlanApproval(pi, ctx, freshContext, slot)
-  } catch (error: unknown) {
-    if (!isStaleExtensionContextError(error)) throw error
-  }
 }

@@ -4,13 +4,7 @@ import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-wor
 import { DefaultMode, type Mode, PlanningMode } from "../mode.ts"
 import { PLAN, entryBase, planCompleteResult, stateEntry, userEntry } from "../utils/fixtures.ts"
 import { decodeSession } from "./decode.ts"
-import {
-  type ModeSlot,
-  presentApproval,
-  promptPlanApproval,
-  restoreMode,
-  setMode,
-} from "./state.ts"
+import { promptPlanApproval, restoreMode, setMode } from "./state.ts"
 
 // index.ts's wiring: decode at the boundary, restore from the typed result
 const restoreFromEntries = (entries: SessionEntry[]): Mode => restoreMode(decodeSession(entries))
@@ -37,11 +31,10 @@ test("restores an explore planning state without a plan", () => {
   assert.equal(mode.plan, undefined)
 })
 
-test("restores a handoff default state with activePlan", () => {
-  const mode = restoreFromEntries(stateEntry({ mode: "default", activePlan: PLAN }))
+test("restores a default state with its tool snapshot", () => {
+  const mode = restoreFromEntries(stateEntry({ mode: "default", toolsBeforePlanMode: ["read"] }))
   assert.ok(mode.isDefault())
-  assert.equal(mode.activePlan, PLAN)
-  assert.equal(mode.toolsBeforePlanMode, undefined)
+  assert.deepEqual(mode.toolsBeforePlanMode, ["read"])
 })
 
 test("recovers the plan from a plan_complete toolResult after the state entry", () => {
@@ -89,19 +82,8 @@ test("persisted plan without phase headings is ignored", () => {
 })
 
 test("default state ignores a persisted planning plan", () => {
-  assert.equal(
-    (
-      restoreFromEntries(
-        stateEntry({ mode: "default", plan: "## 1. Stale", activePlan: PLAN }),
-      ) as DefaultMode
-    ).activePlan,
-    PLAN,
-  )
-  assert.equal(
-    (restoreFromEntries(stateEntry({ enabled: false, plan: "## 1. Stale" })) as DefaultMode)
-      .activePlan,
-    undefined,
-  )
+  assert.ok(restoreFromEntries(stateEntry({ mode: "default", plan: "## 1. Stale" })).isDefault())
+  assert.ok(restoreFromEntries(stateEntry({ enabled: false, plan: "## 1. Stale" })).isDefault())
 })
 
 test("ignores toolResults from other tools", () => {
@@ -132,9 +114,9 @@ test("migrates the pre-mode-objects enabled shape", () => {
   assert.equal(planning.plan, PLAN)
   assert.deepEqual(planning.toolsBeforePlanMode, ["read"])
 
-  const handoff = restoreFromEntries(stateEntry({ enabled: false, activePlan: PLAN }))
+  const handoff = restoreFromEntries(stateEntry({ enabled: false, toolsBeforePlanMode: ["read"] }))
   assert.ok(handoff.isDefault())
-  assert.equal(handoff.activePlan, PLAN)
+  assert.deepEqual(handoff.toolsBeforePlanMode, ["read"])
 })
 
 test("toState round-trips through restoreMode", () => {
@@ -143,7 +125,7 @@ test("toState round-trips through restoreMode", () => {
   planning.toolsBeforePlanMode = ["read"]
   assert.deepEqual(restoreFromEntries(stateEntry(planning.toState())).toState(), planning.toState())
 
-  const handoff = new DefaultMode(PLAN)
+  const handoff = new DefaultMode(["read"])
   assert.deepEqual(restoreFromEntries(stateEntry(handoff.toState())).toState(), handoff.toState())
 })
 
@@ -158,18 +140,20 @@ function planningWithPlan(): PlanningMode {
 interface ApprovalFixture {
   pi: ExtensionAPI
   ctx: ExtensionContext
-  slot: ModeSlot
+  mode: Mode
   entries: unknown[]
   sent: Array<Record<string, unknown>>
+  editorTexts: string[]
 }
 
 function approvalFixture(
   choice: string | undefined,
-  options?: { onMenu?: () => void; editor?: () => Promise<string | undefined> },
+  options?: { editor?: () => Promise<string | undefined> },
 ): ApprovalFixture {
   const entries: unknown[] = []
   const sent: Array<Record<string, unknown>> = []
-  const slot: ModeSlot = { mode: planningWithPlan(), rev: 1 }
+  const editorTexts: string[] = []
+  const mode: Mode = planningWithPlan()
   const pi = {
     getActiveTools: () => ["read", "bash", "edit", "write"],
     setActiveTools: () => {},
@@ -180,89 +164,70 @@ function approvalFixture(
   const ctx = {
     hasUI: false,
     ui: {
-      select: (): Promise<string | undefined> => {
-        options?.onMenu?.()
-        return Promise.resolve(choice)
-      },
+      select: (): Promise<string | undefined> => Promise.resolve(choice),
       editor: options?.editor ?? ((): Promise<string | undefined> => Promise.resolve(undefined)),
       notify: () => {},
       setStatus: () => {},
-      setEditorText: () => {},
+      setEditorText: (text: string) => editorTexts.push(text),
       theme: { fg: (_role: string, text: string) => text },
     },
   } as unknown as ExtensionContext
-  return { pi, ctx, slot, entries, sent }
+  return { pi, ctx, mode, entries, sent, editorTexts }
 }
 
-test("setMode swaps, enters, and persists the successor", () => {
-  const { pi, ctx, slot, entries } = approvalFixture(undefined)
-  const planning = slot.mode as PlanningMode
-  planning.toolsBeforePlanMode = ["read"]
-  setMode(pi, ctx, slot, planning.next())
-  assert.ok(slot.mode.isDefault())
-  assert.deepEqual(entries, [
-    { mode: "default", activePlan: undefined, toolsBeforePlanMode: ["read"] },
-  ])
+test("setMode enters, persists, and returns the successor", () => {
+  const { pi, ctx, mode, entries } = approvalFixture(undefined)
+  ;(mode as PlanningMode).toolsBeforePlanMode = ["read"]
+  const next = setMode(pi, ctx, mode.next())
+  assert.ok(next.isDefault())
+  assert.deepEqual(entries, [{ mode: "default", toolsBeforePlanMode: ["read"] }])
 })
 
 test("approval menu: stay opens the refinement editor, empty keeps planning", async () => {
-  const { pi, ctx, slot, entries, sent } = approvalFixture("Stay and refine the plan")
-  await promptPlanApproval(pi, ctx, undefined, slot)
-  assert.ok(slot.mode.isPlanning())
+  const { pi, ctx, mode, entries, sent } = approvalFixture("Stay and refine the plan")
+  const result = await promptPlanApproval(pi, ctx, undefined, mode)
+  assert.ok(result.isPlanning())
   assert.deepEqual(entries, [])
   assert.deepEqual(sent, [])
 })
 
-test("approval menu: exit swaps to default and persists", async () => {
-  const { pi, ctx, slot, entries } = approvalFixture("Exit plan mode (plan stays in context)")
-  await promptPlanApproval(pi, ctx, undefined, slot)
-  assert.ok(slot.mode.isDefault())
+test("approval menu: exit returns the swapped-in default and persists", async () => {
+  const { pi, ctx, mode, entries } = approvalFixture("Exit plan mode (plan stays in context)")
+  const next = await promptPlanApproval(pi, ctx, undefined, mode)
+  assert.ok(next.isDefault())
   assert.equal(entries.length, 1)
   assert.equal((entries[0] as { mode: string }).mode, "default")
 })
 
 test("approval menu: stay sends the refinement as a follow-up", async () => {
-  const { pi, ctx, slot, sent } = approvalFixture("Stay and refine the plan", {
+  const { pi, ctx, mode, sent } = approvalFixture("Stay and refine the plan", {
     editor: () => Promise.resolve("make it faster"),
   })
-  await promptPlanApproval(pi, ctx, undefined, slot)
-  assert.ok(slot.mode.isPlanning())
+  const result = await promptPlanApproval(pi, ctx, undefined, mode)
+  assert.ok(result.isPlanning())
   assert.deepEqual(sent, [{ customType: "user", content: "make it faster" }])
 })
 
-test("approval menu: bails when the session was replaced while open", async () => {
-  const { pi, ctx, slot, entries } = approvalFixture("Exit plan mode (plan stays in context)", {
-    onMenu: () => {
-      slot.rev += 1
-    },
-  })
-  await promptPlanApproval(pi, ctx, undefined, slot)
-  assert.ok(slot.mode.isPlanning())
-  assert.deepEqual(entries, [])
-})
-
-test("approval menu: bails when the plan was superseded while open", async () => {
-  const { pi, ctx, slot, entries } = approvalFixture("Exit plan mode (plan stays in context)", {
-    onMenu: () => {
-      const superseded = planningWithPlan()
-      superseded.plan = "## 1. Reworked\nA different plan."
-      slot.mode = superseded
-    },
-  })
-  await promptPlanApproval(pi, ctx, undefined, slot)
-  assert.ok(slot.mode.isPlanning())
+test("approval menu: fresh without a command context restages the plan and prefills /plan exec", async () => {
+  const { pi, ctx, mode, entries, editorTexts } = approvalFixture("Execute in fresh session")
+  const result = await promptPlanApproval(pi, ctx, undefined, mode)
+  assert.ok(result.isPlanning())
+  // The restage keeps the menu owed until the prefilled /plan exec runs
+  assert.equal(result.plan, PLAN)
+  assert.deepEqual(editorTexts, ["/plan exec"])
   assert.deepEqual(entries, [])
 })
 
 test("approval menu: without a plan it never opens", async () => {
-  const { pi, ctx, slot, sent } = approvalFixture("Exit plan mode (plan stays in context)")
-  slot.mode = new PlanningMode()
-  await promptPlanApproval(pi, ctx, undefined, slot)
+  const { pi, ctx, sent } = approvalFixture("Exit plan mode (plan stays in context)")
+  const exploring = new PlanningMode()
+  const result = await promptPlanApproval(pi, ctx, undefined, exploring)
+  assert.equal(result, exploring)
   assert.deepEqual(sent, [])
 })
 
-test("presentApproval swallows stale-context errors and rethrows others", async () => {
-  const { pi, ctx, slot, entries } = approvalFixture(undefined)
+test("promptPlanApproval swallows stale-context errors and rethrows others", async () => {
+  const { pi, ctx, mode, entries } = approvalFixture(undefined)
   let thrown: Error | undefined
   const select = ctx.ui.select.bind(ctx.ui)
   ;(ctx.ui as { select: unknown }).select = async (): Promise<string | undefined> => {
@@ -273,11 +238,10 @@ test("presentApproval swallows stale-context errors and rethrows others", async 
   thrown = new Error(
     "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx.",
   )
-  await presentApproval(pi, ctx, undefined, slot)
-  assert.ok(slot.mode.isPlanning())
+  const result = await promptPlanApproval(pi, ctx, undefined, mode)
+  assert.ok(result.isPlanning())
   assert.deepEqual(entries, [])
 
   thrown = new Error("boom")
-  slot.mode = planningWithPlan() // the first call consumed the approval phase
-  await assert.rejects(presentApproval(pi, ctx, undefined, slot), /boom/u)
+  await assert.rejects(promptPlanApproval(pi, ctx, undefined, planningWithPlan()), /boom/u)
 })

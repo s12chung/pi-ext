@@ -21,18 +21,16 @@ test("decodeSession decodes every planning-state field", () => {
   assert.deepEqual(state, {
     mode: "planning",
     plan: PLAN,
-    activePlan: undefined,
     toolsBeforePlanMode: ["read"],
   })
 })
 
 test("decodeSession decodes default-state fields and migrates the legacy enabled shape", () => {
-  const { state } = decodeSession(stateEntry({ mode: "default", activePlan: PLAN }))
+  const { state } = decodeSession(stateEntry({ mode: "default", toolsBeforePlanMode: ["read"] }))
   assert.deepEqual(state, {
     mode: "default",
     plan: undefined,
-    activePlan: PLAN,
-    toolsBeforePlanMode: undefined,
+    toolsBeforePlanMode: ["read"],
   })
 
   const legacy = decodeSession(
@@ -41,7 +39,6 @@ test("decodeSession decodes default-state fields and migrates the legacy enabled
   assert.deepEqual(legacy, {
     mode: "planning",
     plan: PLAN,
-    activePlan: undefined,
     toolsBeforePlanMode: ["read"],
   })
 })
@@ -59,7 +56,6 @@ test("decodeSession drops invalid field values", () => {
   assert.deepEqual(state, {
     mode: "planning",
     plan: undefined,
-    activePlan: undefined,
     toolsBeforePlanMode: undefined,
   })
 })
