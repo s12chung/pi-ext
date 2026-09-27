@@ -8,11 +8,13 @@
  */
 
 // Source (copied verbatim from upstream, minus `value` on options/answers —
-// label doubles as the value — and with question label required; bundled so the
-// plan-mode prompt's questionnaire references resolve without a separate install):
+// label doubles as the value — and with question label required, its register
+// wrapper traded for a definition factory; bundled so the plan-mode prompt's
+// questionnaire references resolve without a separate install):
 // https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/questionnaire.ts
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { type ToolDefinition } from "@earendil-works/pi-coding-agent"
+
 import {
   Editor,
   type EditorTheme,
@@ -88,8 +90,11 @@ function errorResult(
   }
 }
 
-export default function questionnaire(pi: ExtensionAPI): void {
-  pi.registerTool({
+export function questionnaireTool(): ToolDefinition<
+  typeof QuestionnaireParams,
+  QuestionnaireResult
+> {
+  return {
     name: QUESTIONNAIRE_TOOL_NAME,
     label: "Questionnaire",
     description:
@@ -457,5 +462,5 @@ export default function questionnaire(pi: ExtensionAPI): void {
       })
       return new Text(lines.join("\n"), 0, 0)
     },
-  })
+  }
 }

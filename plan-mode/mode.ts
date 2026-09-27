@@ -17,10 +17,10 @@ import { normalizePlanCompletion } from "./plan.ts"
 import type { PlanModeState } from "./state.ts"
 import { getNormalModeTools, getPlanModeTools, unsafeCommandReason } from "./utils.ts"
 
-// Registration lives with the tool whose execution advances the phases
+// The tool definition lives with the tool whose execution advances the phases
 // (completion-tool.ts); re-exported so index.ts wires modes without importing
 // completion internals
-export { registerCompletionTool } from "./completion-tool.ts"
+export { completionTool } from "./completion-tool.ts"
 
 // The [PLAN MODE ACTIVE] prompt injected before every planning agent start.
 // Initial understanding, plan format, read-only override, and
@@ -85,7 +85,7 @@ export abstract class Mode {
     return false
   }
 
-  // Registration is split from the logic (see registerCompletionTool):
+  // Registration is split from the logic (see completionTool):
   // execute delegates here, and the base refuses outside plan mode
   public completePlan(_params: PlanCompletionParams): string {
     throw new Error("plan_complete is only available while plan mode is active")
@@ -192,7 +192,7 @@ export class PlanningMode extends Mode {
     }
   }
 
-  // Validate and advance the phase; registerCompletionTool builds the tool result
+  // Validate and advance the phase; completionTool builds the tool result
   // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (registerTool: plan_mode_complete)
   public completePlan(params: PlanCompletionParams): string {
     const parsed = normalizePlanCompletion(params.plan)

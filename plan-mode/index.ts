@@ -18,8 +18,6 @@
  * commands, events, and session lifecycle.
  */
 
-import { appendFileSync } from "node:fs"
-import type { JsonValue } from "@earendil-works/pi-ai"
 import type {
   AgentSettledEvent,
   BeforeAgentStartEvent,
@@ -29,13 +27,14 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
+  RegisteredCommand,
   SessionStartEvent,
   ToolCallEvent,
   ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent"
 import { decodeSession } from "./decode.ts"
-import { DefaultMode, isDefaultMode, isPlanningMode, registerCompletionTool } from "./mode.ts"
-import questionnaire from "./questionnaire.ts"
+import { DefaultMode, completionTool, isDefaultMode, isPlanningMode } from "./mode.ts"
+import { questionnaireTool } from "./questionnaire.ts"
 import {
   type ModeSlot,
   presentApproval,
@@ -43,20 +42,7 @@ import {
   restoreMode,
   setMode,
 } from "./state.ts"
-
-// Env-gated trace for menu/handoff diagnosis: PLAN_MODE_DEBUG=<file> pi ...
-function debugLog(event: string, data?: JsonValue): void {
-  const path = process.env.PLAN_MODE_DEBUG
-  if (!path) return
-  try {
-    appendFileSync(
-      path,
-      `${new Date().toISOString()} ${event}${data === undefined ? "" : ` ${JSON.stringify(data)}`}\n`,
-    )
-  } catch {
-    // diagnostics must never break the session
-  }
-}
+import { debugLog } from "./utils.ts"
 
 // The mutable state the registration helpers share: the live mode with its
 // session-replacement counter, the freshest command context, and the
@@ -74,26 +60,29 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     refreshStateBeforeFirstAgentStart: false,
   }
 
-  // Registers the questionnaire tool; visibility is toggled by the
-  // required-helpers block in utils.ts (plan-mode only)
-  questionnaire(pi)
-  registerCompletionTool(pi, () => state.modeSlot.mode)
+  // Questionnaire visibility is toggled by the required-helpers block in
+  // utils.ts (plan-mode only)
+  pi.registerTool(questionnaireTool())
+  pi.registerTool(completionTool(() => state.modeSlot.mode))
+  pi.registerCommand("plan", planCommand(pi, state))
 
-  registerPlanCommand(pi, state)
   registerAgentEventHandlers(pi, state)
   registerSessionHandlers(pi, state)
 }
 
-function registerPlanCommand(pi: ExtensionAPI, state: PlanModeExtensionState): void {
-  // pi grants newSession() (and fork/switch/reload) only to command-handler
-  // contexts - it creates them solely when executing an extension command and
-  // inside withSession (runner.js createCommandContext has no other callers).
-  // Events, tools, and shortcuts can therefore never start a session, which is
-  // why /plan is the only plan-mode entry point and the fresh handoff below
-  // bounces through it when the captured context is missing.
-  pi.registerCommand("plan", {
+function planCommand(
+  pi: ExtensionAPI,
+  state: PlanModeExtensionState,
+): Omit<RegisteredCommand, "name" | "sourceInfo"> {
+  return {
+    // pi grants newSession() (and fork/switch/reload) only to command-handler
+    // contexts - it creates them solely when executing an extension command and
+    // inside withSession (runner.js createCommandContext has no other callers).
+    // Events, tools, and shortcuts can therefore never start a session, which is
+    // why /plan is the only plan-mode entry point and the fresh handoff below
+    // bounces through it when the captured context is missing.
     description: "Toggle plan mode (read-only exploration)",
-    handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    handler: async (_args, ctx) => {
       state.latestCommandContext = ctx
       // With a completed plan, bare /plan reopens the approval menu instead of
       // toggling the plan away (the picker's exit choice is the way out)
@@ -105,7 +94,7 @@ function registerPlanCommand(pi: ExtensionAPI, state: PlanModeExtensionState): v
       }
       setMode(pi, ctx, state.modeSlot, state.modeSlot.mode.next())
     },
-  })
+  }
 }
 
 function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionState): void {

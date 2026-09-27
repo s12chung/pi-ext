@@ -1,8 +1,25 @@
 /**
- * Plan-mode policy: bash allowlist and active-tool-set selection.
+ * Plan-mode utilities: env-gated trace logging, bash allowlist, and
+ * active-tool-set selection.
  */
 
+import { appendFileSync } from "node:fs"
+import type { JsonValue } from "@earendil-works/pi-ai"
 import { PLAN_COMPLETE_TOOL_NAME, QUESTIONNAIRE_TOOL_NAME } from "./tools.ts"
+
+// Env-gated trace for menu/handoff diagnosis: PLAN_MODE_DEBUG=<file> pi ...
+export function debugLog(event: string, data?: JsonValue): void {
+  const path = process.env.PLAN_MODE_DEBUG
+  if (!path) return
+  try {
+    appendFileSync(
+      path,
+      `${new Date().toISOString()} ${event}${data === undefined ? "" : ` ${JSON.stringify(data)}`}\n`,
+    )
+  } catch {
+    // diagnostics must never break the session
+  }
+}
 
 // Destructive commands blocked in plan mode
 const DESTRUCTIVE_PATTERNS = [
