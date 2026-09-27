@@ -1,13 +1,14 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { AgentMessage } from "@earendil-works/pi-agent-core"
+import { isApprovePhase } from "./completion-tool.ts"
 import { PLAN } from "./fixtures.ts"
 import { DefaultMode, type Mode, PlanningMode, isDefaultMode, isPlanningMode } from "./mode.ts"
 
 test("toggle round-trips and carries the tool snapshot to default", () => {
   const planning = new DefaultMode().next()
   assert.ok(isPlanningMode(planning))
-  assert.equal(planning.phase.id, "explore")
+  assert.ok(!isApprovePhase(planning.phase))
 
   planning.toolsBeforePlanMode = ["read", "bash"]
   const back = planning.next()
@@ -26,12 +27,12 @@ test("DefaultMode hands its activePlan to a fresh planning mode's discard", () =
 test("completePlan validates before advancing explore → approval", async () => {
   const planning = new PlanningMode()
   await assert.rejects(planning.completePlan({ plan: "just prose" }), /phase headings/u)
-  assert.equal(planning.phase.id, "explore")
+  assert.ok(!isApprovePhase(planning.phase))
   assert.equal(planning.plan, undefined)
 
   const result = await planning.completePlan({ plan: PLAN })
   assert.ok(result.terminate)
-  assert.equal(planning.phase.id, "approval")
+  assert.ok(isApprovePhase(planning.phase))
   assert.equal(planning.plan, PLAN)
   assert.equal(planning.shouldPromptApproval(), true)
 })
@@ -103,7 +104,6 @@ test("toState shapes carry each mode's own fields", () => {
   planning.toolsBeforePlanMode = ["read"]
   assert.deepEqual(planning.toState(), {
     mode: "planning",
-    phase: "explore",
     plan: undefined,
     toolsBeforePlanMode: ["read"],
   })

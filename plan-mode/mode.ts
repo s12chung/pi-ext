@@ -195,7 +195,6 @@ export class PlanningMode extends Mode {
   public toState(): PlanModeState {
     return {
       mode: "planning",
-      phase: this.phase.id,
       plan: this.plan,
       toolsBeforePlanMode: this.toolsBeforePlanMode,
     }

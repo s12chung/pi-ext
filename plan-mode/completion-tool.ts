@@ -23,11 +23,6 @@ export const PLAN_COMPLETE_VERSION = 1
 // anchors the model into padding the plan to exactly that many phases
 export const PLAN_COMPLETE_MAX_PHASES = 10
 
-// The phases of the planning flow, advanced by plan_complete: explore until
-// the plan is submitted, approval while the menu is owed - opening the menu
-// consumes the phase, so rejection simply rests back in explore
-export type PlanningPhase = "explore" | "approval"
-
 export type PlanCompletionDetails = {
   version: typeof PLAN_COMPLETE_VERSION
   source: typeof PLAN_COMPLETE_TOOL_NAME
@@ -111,8 +106,6 @@ export function planCompleted(plan: string): AgentToolResult<PlanCompletionDetai
 // The phases under PlanningMode, stored by it: explore until the plan is
 // submitted, approval while it awaits the menu
 export abstract class PlanningPhaseState {
-  public abstract readonly id: PlanningPhase
-
   // Both phases advance identically: the submitted plan is owed its menu -
   // a refined plan re-enters approval with the new plan
   public submitPlan(plan: string): PlanningPhaseState {
@@ -120,14 +113,11 @@ export abstract class PlanningPhaseState {
   }
 }
 
-export class ExplorePhase extends PlanningPhaseState {
-  public readonly id = "explore" as const
-}
+export class ExplorePhase extends PlanningPhaseState {}
 
 // Exists only while the menu is owed: promptPlanApproval rejects it back to
 // explore when the menu opens
 export class ApprovePhase extends PlanningPhaseState {
-  public readonly id = "approval" as const
   public readonly plan: string
 
   public constructor(plan: string) {

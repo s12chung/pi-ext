@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent"
-import { ApprovePhase } from "./completion-tool.ts"
+import { ApprovePhase, isApprovePhase } from "./completion-tool.ts"
 import { decodeSession } from "./decode.ts"
 import { PLAN, entryBase, planCompleteResult, stateEntry, userEntry } from "./fixtures.ts"
 import { DefaultMode, type Mode, PlanningMode, isDefaultMode, isPlanningMode } from "./mode.ts"
@@ -28,7 +28,7 @@ test("restores a planning state in approval with its plan", () => {
     stateEntry({ mode: "planning", phase: "approval", plan: PLAN, toolsBeforePlanMode: ["read"] }),
   )
   assert.ok(isPlanningMode(mode))
-  assert.equal(mode.phase.id, "approval")
+  assert.ok(isApprovePhase(mode.phase))
   assert.equal(mode.plan, PLAN)
   assert.deepEqual(mode.toolsBeforePlanMode, ["read"])
 })
@@ -36,7 +36,7 @@ test("restores a planning state in approval with its plan", () => {
 test("restores an explore planning state without a plan", () => {
   const mode = restoreFromEntries(stateEntry({ mode: "planning", phase: "explore" }))
   assert.ok(isPlanningMode(mode))
-  assert.equal(mode.phase.id, "explore")
+  assert.ok(!isApprovePhase(mode.phase))
   assert.equal(mode.plan, undefined)
 })
 
@@ -56,7 +56,7 @@ test("recovers the plan from a plan_complete toolResult after the state entry", 
   )
   assert.ok(isPlanningMode(mode))
   assert.equal(mode.plan, PLAN)
-  assert.equal(mode.phase.id, "approval")
+  assert.ok(isApprovePhase(mode.phase))
 })
 
 test("ignores plan_complete toolResults before the state entry", () => {
@@ -92,7 +92,7 @@ test("persisted plan without phase headings is ignored", () => {
   )
   assert.ok(isPlanningMode(mode))
   assert.equal(mode.plan, undefined)
-  assert.equal(mode.phase.id, "explore")
+  assert.ok(!isApprovePhase(mode.phase))
 })
 
 test("default state ignores a persisted planning plan", () => {
@@ -136,7 +136,7 @@ test("migrates the pre-mode-objects enabled shape", () => {
     stateEntry({ enabled: true, plan: PLAN, toolsBeforePlanMode: ["read"] }),
   )
   assert.ok(isPlanningMode(planning))
-  assert.equal(planning.phase.id, "approval")
+  assert.ok(isApprovePhase(planning.phase))
   assert.equal(planning.plan, PLAN)
   assert.deepEqual(planning.toolsBeforePlanMode, ["read"])
 

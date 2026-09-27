@@ -10,7 +10,6 @@ import type { CustomEntry, SessionEntry } from "@earendil-works/pi-coding-agent"
 import {
   PLAN_COMPLETE_TOOL_NAME,
   PLAN_COMPLETE_VERSION,
-  type PlanningPhase,
   normalizePlanCompletion,
 } from "./completion-tool.ts"
 import type { PlanModeState } from "./state.ts"
@@ -47,15 +46,10 @@ function decodeStateData(data: unknown): PlanModeState | undefined {
   const planning = data.mode === "planning" || data.enabled === true
   return {
     mode: planning ? "planning" : "default",
-    phase: decodedPhase(data.phase),
     plan: decodedPlan(data.plan),
     activePlan: decodedPlan(data.activePlan),
     toolsBeforePlanMode: decodedStringArray(data.toolsBeforePlanMode),
   }
-}
-
-function decodedPhase(value: unknown): PlanningPhase | undefined {
-  return value === "approval" || value === "explore" ? value : undefined
 }
 
 // A persisted plan must still validate before it is displayed

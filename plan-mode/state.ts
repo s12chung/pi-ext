@@ -11,7 +11,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
-import { ApprovePhase, type PlanningPhase, isApprovePhase } from "./completion-tool.ts"
+import { ApprovePhase, isApprovePhase } from "./completion-tool.ts"
 import type { DecodedSession } from "./decode.ts"
 import {
   isCommandContext,
@@ -22,10 +22,8 @@ import { DefaultMode, type EnterOptions, type Mode, PlanningMode, isPlanningMode
 
 export interface PlanModeState {
   mode: "default" | "planning"
-  // Planning-only: the phase plan_complete last advanced to (approval iff a
-  // plan is present - completePlan is the only plan-setter)
-  phase?: PlanningPhase
-  // While planning (approval); DefaultMode carries activePlan instead
+  // While planning (approval iff present - completePlan is the only
+  // plan-setter); DefaultMode carries activePlan instead
   plan?: string
   // Plan handed off for execution in this session, if any
   activePlan?: string
