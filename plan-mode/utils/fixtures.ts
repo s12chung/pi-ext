@@ -1,7 +1,12 @@
 // Shared fixtures: session-entry builders mirroring the shapes pi persists to
-// the session JSONL, a dialog-capable fake ctx for the UI surface, and the
-// canonical two-phase plan the tests decode and swap
+// the session JSONL, a dialog-capable fake ctx for the UI surface, the
+// canonical two-phase plan the tests decode and swap, and temp agent dirs for
+// config loading
 
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import type { TestContext } from "node:test"
 import type { JsonValue } from "@earendil-works/pi-ai"
 import type { ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent"
 
@@ -33,6 +38,27 @@ export const userEntry: SessionEntry = {
   type: "message",
   ...entryBase,
   message: { role: "user", content: "and then?", timestamp: 0 },
+}
+
+// A temp agent dir for config tests; a body string writes plan-mode.json into
+// it, undefined leaves it empty (the missing-file case). Removed at test end.
+export function agentDirWith(t: TestContext, body?: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "plan-mode-config-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  if (body !== undefined) writeFileSync(join(dir, "plan-mode.json"), body)
+  return dir
+}
+
+// Points PI_CODING_AGENT_DIR at value (undefined clears it) for the test's
+// duration, restoring the previous value afterwards
+export function withAgentDirEnv(t: TestContext, value: string | undefined): void {
+  const original = process.env.PI_CODING_AGENT_DIR
+  t.after(() => {
+    if (original === undefined) delete process.env.PI_CODING_AGENT_DIR
+    else process.env.PI_CODING_AGENT_DIR = original
+  })
+  if (value === undefined) delete process.env.PI_CODING_AGENT_DIR
+  else process.env.PI_CODING_AGENT_DIR = value
 }
 
 // A dialog-capable fake ctx: select resolves to choice (Esc when absent),

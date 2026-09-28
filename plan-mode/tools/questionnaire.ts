@@ -9,11 +9,14 @@
 
 // Source (copied verbatim from upstream, minus `value` on options/answers —
 // label doubles as the value — and with question label required, its register
-// wrapper traded for a definition factory; bundled so the plan-mode prompt's
-// questionnaire references resolve without a separate install):
+// wrapper traded for a definition factory, its description extracted to
+// config.ts (configurable); bundled so the plan-mode prompt's questionnaire
+// references resolve without a separate install):
 // https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/questionnaire.ts
 
 import { type ToolDefinition } from "@earendil-works/pi-coding-agent"
+
+import { PROMPTS } from "../config.ts"
 
 import {
   Editor,
@@ -97,8 +100,7 @@ export function questionnaireTool(): ToolDefinition<
   return {
     name: QUESTIONNAIRE_TOOL_NAME,
     label: "Questionnaire",
-    description:
-      "Ask the user one or more questions. Use for clarifying requirements, getting preferences, or confirming decisions. For single questions, shows a simple option list. For multiple questions, shows a tab-based interface.",
+    description: PROMPTS.questionnaireDescription,
     parameters: QuestionnaireParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {

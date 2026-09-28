@@ -6,7 +6,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 import planModeExtension from "./index.ts"
-import { PLAN, stateEntry, uiFake } from "./utils/fixtures.ts"
+import { PLAN, agentDirWith, stateEntry, uiFake, withAgentDirEnv } from "./utils/fixtures.ts"
 
 type RegisteredTool = {
   name: string
@@ -200,4 +200,31 @@ test("/plan menu stay keeps planning and persists nothing", async () => {
 
   assert.deepEqual(ext.entries, [])
   assert.deepEqual(menu.notifies, ["/plan will prompt the approval."])
+})
+
+test("plan-mode.json overrides ride the reminders and notify nothing", (t) => {
+  const dir = agentDirWith(t, JSON.stringify({ planModePrompt: "CUSTOM PLAN PROMPT" }))
+  withAgentDirEnv(t, dir)
+
+  const ext = extension()
+  const session = uiFake({ entries: stateEntry({ mode: "planning" }) })
+  ext.sessionStart(session.ctx)
+
+  assert.match(tailText(ext.context(userTurn("go"))), /CUSTOM PLAN PROMPT/u)
+  assert.deepEqual(session.notifies, [])
+})
+
+test("a malformed plan-mode.json warns once, on the first session_start", (t) => {
+  withAgentDirEnv(t, agentDirWith(t, "{broken"))
+
+  const ext = extension()
+  const session = uiFake()
+  ext.sessionStart(session.ctx)
+  assert.equal(session.notifies.length, 1)
+  assert.match(session.notifies[0], /plan-mode\.json/u)
+
+  // Cleared after the first notify: a replacement session stays silent
+  const replacement = uiFake()
+  ext.sessionStart(replacement.ctx)
+  assert.deepEqual(replacement.notifies, [])
 })

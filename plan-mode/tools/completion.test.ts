@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent"
+import { PROMPTS } from "../config.ts"
 import { type PlanCompletionDetails, completionTool } from "./completion.ts"
 
 const PLAN =
@@ -17,6 +18,20 @@ type RegisteredTool = {
 function definition(setPlan: (plan: string) => void = () => undefined): RegisteredTool {
   return completionTool(setPlan) as unknown as RegisteredTool
 }
+
+test("the configured prompts shape the description and the plan param", (t) => {
+  const original = { ...PROMPTS }
+  t.after(() => Object.assign(PROMPTS, original))
+  Object.assign(PROMPTS, { planCompleteDescription: "WHEN", planFormatDescription: "FORMAT" })
+
+  const tool = completionTool(() => undefined) as unknown as {
+    description: string
+    parameters: { properties: { plan: { description: string } } }
+  }
+
+  assert.equal(tool.description, "WHEN")
+  assert.equal(tool.parameters.properties.plan.description, "FORMAT")
+})
 
 test("execute terminates the turn, staging and echoing the trimmed plan", async () => {
   let staged: string | undefined

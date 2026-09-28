@@ -21,6 +21,7 @@ import type {
   RegisteredCommand,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent"
+import { PROMPTS, loadPrompts } from "./config.ts"
 import {
   DefaultMode,
   type Mode,
@@ -37,11 +38,13 @@ import { debugLog } from "./utils/debug.ts"
 import { reconcileToolSet } from "./utils/tool-set.ts"
 
 // The mutable state the registration helpers share: the live mode, the exit
-// flag the reminder reads, and the freshest command context
+// flag the reminder reads, the freshest command context, and the load-time
+// config warning still owed its one-time notify
 interface PlanModeExtensionState {
   mode: Mode
   justExitedPlan: boolean
   latestCommandContext: ExtensionCommandContext | undefined
+  configWarning: string | undefined
 }
 
 function enterNextMode(
@@ -57,10 +60,16 @@ function enterNextMode(
 }
 
 export default function planModeExtension(pi: ExtensionAPI): void {
+  // The one load: overlays plan-mode.json onto the PROMPTS the tools and
+  // reminders import; /reload re-runs this factory, so edits apply
+  const { prompts, warning } = loadPrompts()
+  Object.assign(PROMPTS, prompts)
+
   const state: PlanModeExtensionState = {
     mode: new DefaultMode(),
     justExitedPlan: false,
     latestCommandContext: undefined,
+    configWarning: warning,
   }
 
   pi.registerTool(questionnaireTool())
@@ -85,8 +94,7 @@ function planCommand(
   state: PlanModeExtensionState,
 ): Omit<RegisteredCommand, "name" | "sourceInfo"> {
   return {
-    description:
-      "Toggle plan mode (read-only exploration); /plan exec starts a fresh implementation session",
+    description: PROMPTS.planCommandDescription,
     handler: async (args, ctx) => {
       if (!ctx.hasUI) throw new Error("Plan mode does not work without dialog capable UI")
 
@@ -162,6 +170,13 @@ function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState
     debugLog("session_start", { reason: event.reason })
     state.latestCommandContext = undefined
     state.justExitedPlan = false
+
+    // The load-time config warning surfaces once, on the first start
+    if (state.configWarning) {
+      ctx.ui.notify(state.configWarning, "warning")
+      state.configWarning = undefined
+    }
+
     state.mode = restoreMode(decodedMode(ctx.sessionManager.getEntries()))
     state.mode.enter(ctx)
 

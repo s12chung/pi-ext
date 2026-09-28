@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { ContextEvent } from "@earendil-works/pi-coding-agent"
+import { PROMPTS } from "../config.ts"
 import { DefaultMode, PlanningMode } from "../mode.ts"
 import { applyReminders } from "./reminder.ts"
 
@@ -61,6 +62,20 @@ test("planning appends the plan-mode prompt on a fresh-turn tail", () => {
   if (!head || head.role !== "user" || typeof head.content !== "string")
     throw new Error("expected a string-content user head")
   assert.notEqual(reminded, messages)
+})
+
+test("a configured prompt replaces the built-in", (t) => {
+  const original = { ...PROMPTS }
+  t.after(() => Object.assign(PROMPTS, original))
+
+  Object.assign(PROMPTS, { planModePrompt: "CUSTOM PROMPT" })
+  const reminded = applyReminders(new PlanningMode(), false, userTurn("go"))
+  assert.equal(tailLastText(reminded), "CUSTOM PROMPT")
+
+  // The configured note replaces the built-in the same way
+  Object.assign(PROMPTS, { planModeEndedPrompt: "CUSTOM NOTE" })
+  const ended = applyReminders(new DefaultMode(), true, userTurn("go"))
+  assert.equal(tailLastText(ended), "CUSTOM NOTE")
 })
 
 test("planning appends on a mid-run tool-result tail", () => {

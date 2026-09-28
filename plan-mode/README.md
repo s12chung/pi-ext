@@ -20,6 +20,17 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 2. Ask the agent to analyze code and plan a change; it may ask clarifying questions along the way.
 3. When the plan is ready, the agent submits it via `plan_complete`. Choose to execute in a fresh session, keep iterating, or exit plan mode with the plan still in context.
 
+## Configuration
+
+All the prompts, including the tool descriptions, can be overwritten from `<agent-dir>/plan-mode.json` (agent dir: `PI_CODING_AGENT_DIR` or `~/.pi/agent`):
+
+- `planModePrompt` - appended to every request while planning
+- `planModeEndedPrompt` - appended to requests right after leaving plan mode
+- `planCompleteDescription` - the `plan_complete` tool description
+- `planFormatDescription` - what the `plan_complete` plan parameter should contain
+- `questionnaireDescription` - the `questionnaire` tool description
+- `planCommandDescription` - the `/plan` command description
+
 ## Tests
 
 From the repo root (installs the type dependencies into the root `node_modules`):
