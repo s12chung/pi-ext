@@ -14,42 +14,24 @@ test("toggle round-trips and carries the tool snapshot to default", () => {
   assert.deepEqual(back.toolsBeforePlanMode, ["read", "bash"])
 })
 
-test("completePlan validates before staging the plan", () => {
-  const planning = new PlanningMode()
-  assert.throws(() => planning.completePlan({ plan: "just prose" }), /phase headings/u)
-  assert.equal(planning.plan, undefined)
-
-  planning.completePlan({ plan: PLAN })
-  assert.equal(planning.plan, PLAN)
-  assert.equal(planning.shouldPromptApproval(), true)
-})
-
-test("shouldPromptApproval only while a plan is staged", () => {
-  const planning = new PlanningMode()
-  assert.equal(planning.shouldPromptApproval(), false)
-
-  planning.completePlan({ plan: PLAN })
-  assert.equal(planning.shouldPromptApproval(), true)
-
-  // Opening the menu unstages the plan: rejection rests in explore
-  planning.unstagePlan()
-  assert.equal(planning.shouldPromptApproval(), false)
-  assert.equal(planning.plan, undefined)
-
-  // A refined plan restages and re-enters approval
-  planning.completePlan({ plan: "## 1. Reworked\nDifferent.\n\n## 2. Verify\nTest." })
-  assert.equal(planning.plan, "## 1. Reworked\nDifferent.\n\n## 2. Verify\nTest.")
-  assert.equal(planning.shouldPromptApproval(), true)
-})
-
-test("DefaultMode refuses plan_complete and stays permissive", () => {
+test("getPlan hands out the staged plan", () => {
   const mode: Mode = new DefaultMode()
-  assert.throws(
-    () => mode.completePlan({ plan: PLAN }),
-    /only available while plan mode is active/u,
-  )
+  assert.equal(mode.getPlan(), undefined)
+
+  const planning = new PlanningMode()
+  assert.equal(planning.getPlan(), undefined)
+  planning.plan = PLAN
+  assert.equal(planning.getPlan(), PLAN)
+
+  planning.plan = undefined
+  assert.equal(planning.getPlan(), undefined)
+})
+
+test("DefaultMode is permissive outside planning", () => {
+  const mode: Mode = new DefaultMode()
+  // index.ts's completionTool callback gates plan_complete on isPlanning()
+  assert.equal(mode.isPlanning(), false)
   assert.equal(mode.systemPrompt(), "")
-  assert.equal(mode.shouldPromptApproval(), false)
 })
 
 test("PlanningMode returns the plan-mode prompt with the read-only constraint", () => {

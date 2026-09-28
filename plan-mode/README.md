@@ -21,7 +21,7 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 4. When the plan is decision-ready, the agent calls `plan_complete` with the plan as free-flow markdown — numbered phase headings in broad strokes, ending with a testing and verification phase. Invalid formats are rejected with a corrective error so the agent resubmits; only a valid plan is displayed.
 5. Choose what happens next:
    - **Execute in fresh session** — starts a new session whose kickoff prompt embeds the plan; the planning transcript stays behind in the parent session
-   - **Stay and refine the plan** — keep iterating; an empty refinement submission (or Esc, on either the picker or the editor) just stays
+   - **Stay in plan mode** — keep iterating in the conversation; `/plan` will prompt the approval (Esc just stays)
    - **Exit plan mode (plan stays in context)** — restore full access; the plan remains in the transcript, so you can act on it yourself
 
 ## Commands
@@ -33,7 +33,7 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 
 ## Persistence and recovery
 
-State is appended to the session file via `appendEntry("plan-mode", ...)`. On resume, the latest entry restores the mode, plan, and prior tool set. If pi crashes between a `plan_complete` call and the next state append, the plan is recovered from that tool result's details.
+State is appended to the session file via `appendEntry("plan-mode", ...)`: when the mode changes and when `plan_complete` stages a plan. On resume, the latest entry restores the mode, plan, and prior tool set — the persisted plan is the only source, with no recovery from tool results.
 
 ## Tests
 

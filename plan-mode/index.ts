@@ -13,7 +13,7 @@
  *
  * The mode objects (mode.ts) own the tool set, UI, event behavior, and the
  * approval menu; entry.ts is the persisted session entry - its typed shape
- * and the save/restore of the live mode objects; decode.ts turns persisted
+ * and the restore of the live mode objects; decode.ts turns persisted
  * session entries into typed shapes - the only module that sees their
  * unknown payloads. This module is the wiring: commands, events, and session
  * lifecycle.
@@ -35,8 +35,8 @@ import {
   promptPlanApproval,
   startFreshHandoff,
 } from "./mode.ts"
-import { decodeSession } from "./session/decode.ts"
-import { restoreMode, saveMode } from "./session/entry.ts"
+import { decodedState } from "./session/decode.ts"
+import { PLAN_MODE_ENTRY_TYPE, restoreMode } from "./session/entry.ts"
 import { safeSetSection } from "./session/prompt.ts"
 import { questionnaireTool } from "./tools/questionnaire.ts"
 import { debugLog } from "./utils/debug.ts"
@@ -48,16 +48,33 @@ interface PlanModeExtensionState {
   latestCommandContext: ExtensionCommandContext | undefined
 }
 
+function enterNextMode(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  state: PlanModeExtensionState,
+): void {
+  state.mode = state.mode.next()
+  state.mode.enter(pi, ctx)
+  ctx.ui.notify(state.mode.enterNotice)
+  pi.appendEntry(PLAN_MODE_ENTRY_TYPE, state.mode.toState())
+}
+
 export default function planModeExtension(pi: ExtensionAPI): void {
   const state: PlanModeExtensionState = {
     mode: new DefaultMode(),
     latestCommandContext: undefined,
   }
 
-  // Questionnaire visibility is toggled by the required-helpers block in
-  // utils.ts (plan-mode only)
   pi.registerTool(questionnaireTool())
-  pi.registerTool(completionTool(() => state.mode))
+  pi.registerTool(
+    completionTool((plan: string): void => {
+      const mode = state.mode
+      if (!mode.isPlanning())
+        throw new Error("plan_complete is only available while plan mode is active")
+      mode.plan = plan
+      pi.appendEntry(PLAN_MODE_ENTRY_TYPE, mode.toState())
+    }),
+  )
   pi.registerCommand("plan", planCommand(pi, state))
 
   registerAgentEventHandlers(pi, state)
@@ -73,27 +90,28 @@ function planCommand(
     description:
       "Toggle plan mode (read-only exploration); /plan exec starts a fresh implementation session",
     handler: async (args, ctx) => {
+      if (!ctx.hasUI) throw new Error("Plan mode does not work without dialog capable UI")
+
       state.latestCommandContext = ctx
+
+      const plan = state.mode.getPlan()
       if (args.trim() === "exec") {
-        const mode = state.mode
-        if (!mode.isPlanning() || mode.plan === undefined) {
+        if (!plan) {
           ctx.ui.notify("No completed plan to execute. Complete a plan in plan mode first.", "info")
           return
         }
-        const plan = mode.plan
-        mode.unstagePlan()
-        await startFreshHandoff(pi, ctx, ctx, mode, plan)
+        debugLog("/plan startFreshHandoff")
+        await startFreshHandoff(ctx, ctx, plan)
         return
       }
-      // With a completed plan, bare /plan reopens the approval menu instead of
-      // toggling the plan away (the picker's exit choice is the way out)
-      // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (/plan showCurrent)
-      if (state.mode.isPlanning() && state.mode.plan && ctx.hasUI) {
-        debugLog("/plan reopen")
-        state.mode = await promptPlanApproval(pi, ctx, ctx, state.mode)
+      if (plan) {
+        debugLog("/plan promptPlanApproval")
+        // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (/plan showCurrent)
+        if (await promptPlanApproval(ctx, ctx, plan)) enterNextMode(pi, ctx, state)
         return
       }
-      state.mode = saveMode(pi, ctx, state.mode.next())
+      debugLog("/plan enterMode")
+      enterNextMode(pi, ctx, state)
     },
   }
 }
@@ -105,8 +123,6 @@ function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionSt
     safeSetSection(state.mode.systemPrompt(), event.systemPromptOptions.sections)
   })
 
-  pi.on("agent_end", (): void => state.mode.onAgentEnd(pi))
-
   // Present the approval menu once the agent truly settles - not between a
   // turn end and delivery of still-queued follow-up messages, which would
   // stack a second menu behind the first
@@ -114,10 +130,13 @@ function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionSt
   pi.on(
     "agent_settled",
     async (_event: AgentSettledEvent, ctx: ExtensionContext): Promise<void> => {
-      if (!ctx.hasUI || !state.mode.shouldPromptApproval()) return
+      const plan = state.mode.getPlan()
+      if (!ctx.hasUI || !plan) return
       if (!ctx.isIdle() || ctx.hasPendingMessages()) return
+
       debugLog("agent_settled menu", { idle: true, pending: ctx.hasPendingMessages() })
-      state.mode = await promptPlanApproval(pi, ctx, state.latestCommandContext, state.mode)
+      const exit = await promptPlanApproval(ctx, state.latestCommandContext, plan)
+      if (exit) enterNextMode(pi, ctx, state)
     },
   )
 }
@@ -137,7 +156,7 @@ function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState
   pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext): void => {
     debugLog("session_start", { reason: event.reason })
     state.latestCommandContext = undefined
-    state.mode = restoreMode(decodeSession(ctx.sessionManager.getEntries()))
-    state.mode.enter(pi, ctx, { notify: false })
+    state.mode = restoreMode(decodedState(ctx.sessionManager.getEntries()))
+    state.mode.enter(pi, ctx)
   })
 }

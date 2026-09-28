@@ -1,108 +1,63 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { AgentToolResult, SessionEntry } from "@earendil-works/pi-coding-agent"
-import { PLAN, entryBase, planCompleteResult, stateEntry } from "../utils/fixtures.ts"
-import { decodeSession, toolResultText } from "./decode.ts"
+import type { AgentToolResult } from "@earendil-works/pi-coding-agent"
+import { PLAN, entryBase, stateEntry, userEntry } from "../utils/fixtures.ts"
+import { decodedState, toolResultText } from "./decode.ts"
 
-test("decodeSession returns no state without a plan-mode entry", () => {
-  assert.equal(decodeSession([]).state, undefined)
-  const userMessage: SessionEntry = {
-    type: "message",
-    ...entryBase,
-    message: { role: "user", content: "hi", timestamp: 0 },
-  }
-  assert.equal(decodeSession([userMessage]).state, undefined)
+test("decodedState returns no state without a plan-mode entry", () => {
+  assert.equal(decodedState([]), undefined)
+  assert.equal(decodedState([userEntry]), undefined)
 })
 
-test("decodeSession decodes every planning-state field", () => {
-  const { state } = decodeSession(
-    stateEntry({ mode: "planning", plan: PLAN, toolsBeforePlanMode: ["read"] }),
+test("decodedState decodes every planning-state field", () => {
+  assert.deepEqual(
+    decodedState(stateEntry({ mode: "planning", plan: PLAN, toolsBeforePlanMode: ["read"] })),
+    { mode: "planning", plan: PLAN, toolsBeforePlanMode: ["read"] },
   )
-  assert.deepEqual(state, {
-    mode: "planning",
-    plan: PLAN,
-    toolsBeforePlanMode: ["read"],
-  })
 })
 
-test("decodeSession decodes default-state fields and migrates the legacy enabled shape", () => {
-  const { state } = decodeSession(stateEntry({ mode: "default", toolsBeforePlanMode: ["read"] }))
-  assert.deepEqual(state, {
+test("decodedState decodes default-state fields and drops the legacy enabled shape", () => {
+  assert.deepEqual(decodedState(stateEntry({ mode: "default", toolsBeforePlanMode: ["read"] })), {
     mode: "default",
     plan: undefined,
     toolsBeforePlanMode: ["read"],
   })
 
-  const legacy = decodeSession(
-    stateEntry({ enabled: true, plan: PLAN, toolsBeforePlanMode: ["read"] }),
-  ).state
-  assert.deepEqual(legacy, {
-    mode: "planning",
-    plan: PLAN,
-    toolsBeforePlanMode: ["read"],
-  })
+  // The enabled boolean no longer migrates: decode follows mode only
+  assert.deepEqual(
+    decodedState(stateEntry({ enabled: true, plan: PLAN, toolsBeforePlanMode: ["read"] })),
+    { mode: "default", plan: PLAN, toolsBeforePlanMode: ["read"] },
+  )
 })
 
-test("decodeSession drops invalid field values", () => {
-  const { state } = decodeSession(
-    stateEntry({
-      mode: "planning",
-      futureField: "bogus",
-      plan: "no headings",
-      activePlan: 42,
-      toolsBeforePlanMode: ["read", "", 7],
-    }),
+test("decodedState narrows structurally and drops unknown-shaped fields", () => {
+  assert.deepEqual(
+    decodedState(
+      stateEntry({
+        mode: "planning",
+        futureField: "bogus",
+        plan: 42,
+        toolsBeforePlanMode: ["read", "", 7],
+      }),
+    ),
+    { mode: "planning", plan: undefined, toolsBeforePlanMode: undefined },
   )
-  assert.deepEqual(state, {
-    mode: "planning",
-    plan: undefined,
-    toolsBeforePlanMode: undefined,
-  })
 })
 
-test("decodeSession recovers the newest plan_complete toolResult after the state entry", () => {
-  const decoded = decodeSession(
-    stateEntry(
-      { mode: "planning" },
-      planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. First" }),
-      planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. Second" }),
-    ),
+test("decodedState keeps plan content without re-validating it", () => {
+  // The plan was validated before it was persisted; a JSON round-trip cannot
+  // invalidate a string
+  assert.equal(
+    decodedState(stateEntry({ mode: "planning", plan: "no headings" }))?.plan,
+    "no headings",
   )
-  assert.equal(decoded.completionPlan, "## 1. Second")
 })
 
-test("decodeSession ignores toolResults before the state entry", () => {
-  const decoded = decodeSession([
-    planCompleteResult({ version: 1, source: "plan_complete", plan: PLAN }),
-    ...stateEntry({ mode: "planning" }),
-  ])
-  assert.equal(decoded.completionPlan, undefined)
-})
-
-test("decodeSession vets toolResult details identity", () => {
-  const wrongVersion = decodeSession(
-    stateEntry(
-      { mode: "planning" },
-      planCompleteResult({ version: 2, source: "plan_complete", plan: PLAN }),
-    ),
+test("decodedState returns undefined for a non-record payload", () => {
+  assert.equal(
+    decodedState([{ type: "custom", customType: "plan-mode", data: "garbage", ...entryBase }]),
+    undefined,
   )
-  assert.equal(wrongVersion.completionPlan, undefined)
-
-  const wrongSource = decodeSession(
-    stateEntry(
-      { mode: "planning" },
-      planCompleteResult({ version: 1, source: "other", plan: PLAN }),
-    ),
-  )
-  assert.equal(wrongSource.completionPlan, undefined)
-
-  const invalidPlan = decodeSession(
-    stateEntry(
-      { mode: "planning" },
-      planCompleteResult({ version: 1, source: "plan_complete", plan: "no headings" }),
-    ),
-  )
-  assert.equal(invalidPlan.completionPlan, undefined)
 })
 
 // Source (adapted: planModeCompletionMarkdown → toolResultText):

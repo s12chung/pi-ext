@@ -8,10 +8,8 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
-import { type PlanModeState, saveMode } from "./session/entry.ts"
+import { type ModeEntry } from "./session/entry.ts"
 import { startFreshImplementation } from "./session/fresh-implementation.ts"
-import { type PlanCompletionParams } from "./tools/completion.ts"
-import { normalizePlanCompletion } from "./tools/plan.ts"
 import { ensureBorderTint, setPlanBorderActive } from "./ui/border-tint.ts"
 import { errorIncludes } from "./utils/safe.ts"
 import { getNormalModeTools, getPlanModeTools } from "./utils/tool-set.ts"
@@ -20,6 +18,10 @@ import { getNormalModeTools, getPlanModeTools } from "./utils/tool-set.ts"
 // (tools/completion.ts); re-exported so index.ts wires modes without importing
 // completion internals
 export { completionTool } from "./tools/completion.ts"
+
+// The status-line slot both modes write under: PlanningMode sets its label,
+// DefaultMode clears it by key
+const PLAN_MODE_STATUS_KEY = "plan-mode"
 
 // The [PLAN MODE ACTIVE] prompt PlanningMode returns for its system-prompt
 // section (index.ts owns the "plan-mode" key) - opencode placement: mode
@@ -59,35 +61,27 @@ only end with either asking the user a question or calling plan_complete. Do
 not stop unless it's for these 2 reasons. Do NOT use the questionnaire tool
 to ask "Is this plan okay?" - that's what plan_complete does.`
 
-export type EnterOptions = { notify?: boolean }
-
 export abstract class Mode {
   /** Apply the tool set and UI. Idempotent - the session_start restore path re-calls it. */
-  public abstract enter(pi: ExtensionAPI, ctx: ExtensionContext, options?: EnterOptions): void
+  public abstract enter(pi: ExtensionAPI, ctx: ExtensionContext): void
   /** /plan toggle successor, carrying handoff data */
   public abstract next(): Mode
   /** Persisted shape; entry.ts reconstructs the objects from it */
-  public abstract toState(): PlanModeState
+  public abstract toState(): ModeEntry
+  /** The toast a mode transition shows on entering this mode */
+  public abstract readonly enterNotice: string
 
   /** This mode's system-prompt section content; empty string contributes no section. */
   public systemPrompt = (): string => ""
-  public onAgentEnd = (_pi: ExtensionAPI): void => {}
-  public shouldPromptApproval = (): boolean => false
 
-  // Registration is split from the logic (see completionTool):
-  // execute delegates here, and the base refuses outside plan mode
-  public completePlan(_params: PlanCompletionParams): string {
-    throw new Error("plan_complete is only available while plan mode is active")
-  }
+  public getPlan = (): string | undefined => undefined
 
-  // Narrowing predicates on the base so callers chain them off the mode
-  // object; instanceof keeps each answer single-sourced - no subclass overrides
   public isPlanning = (): this is PlanningMode => this instanceof PlanningMode
-
   public isDefault = (): this is DefaultMode => this instanceof DefaultMode
 }
 
 export class DefaultMode extends Mode {
+  public readonly enterNotice = "Plan mode disabled."
   public readonly toolsBeforePlanMode: string[] | undefined
 
   public constructor(toolsBeforePlanMode?: string[]) {
@@ -95,7 +89,7 @@ export class DefaultMode extends Mode {
     this.toolsBeforePlanMode = toolsBeforePlanMode
   }
 
-  public enter(pi: ExtensionAPI, ctx: ExtensionContext, options?: EnterOptions): void {
+  public enter(pi: ExtensionAPI, ctx: ExtensionContext): void {
     ensureBorderTint(ctx)
     setPlanBorderActive(false)
     // pi auto-activates newly registered tools, so plan-only helpers can pollute
@@ -106,13 +100,12 @@ export class DefaultMode extends Mode {
     // (enablePlanModeTools/restoreNormalModeTools)
     // Source: https://github.com/narumiruna/pi-extensions/blob/e74ee843d8ad1a6ef1932922a7d8dad335b24baa/packages/pi-plan-mode/src/helper-tool-visibility.ts (reconcileInactiveState/hideIfLocked)
     pi.setActiveTools(getNormalModeTools(this.toolsBeforePlanMode ?? pi.getActiveTools()))
-    ctx.ui.setStatus("plan-mode", undefined)
-    if (options?.notify !== false) ctx.ui.notify("Plan mode disabled. Full access restored.")
+    ctx.ui.setStatus(PLAN_MODE_STATUS_KEY, undefined)
   }
 
   public next = (): Mode => new PlanningMode()
 
-  public toState(): PlanModeState {
+  public toState(): ModeEntry {
     return {
       mode: "default",
       toolsBeforePlanMode: this.toolsBeforePlanMode,
@@ -122,12 +115,13 @@ export class DefaultMode extends Mode {
 
 export class PlanningMode extends Mode {
   // The phase is the staged plan itself: undefined explores, a string owes its
-  // approval menu - plan_complete stages it, promptPlanApproval unstages it
-  // back to exploring
+  // approval menu - plan_complete stages it (a resubmit overwrites) and only
+  // the exit's mode swap drops it
   public plan: string | undefined
   public toolsBeforePlanMode: string[] | undefined
+  public readonly enterNotice = "Plan mode enabled."
 
-  public enter(pi: ExtensionAPI, ctx: ExtensionContext, options?: EnterOptions): void {
+  public enter(pi: ExtensionAPI, ctx: ExtensionContext): void {
     ensureBorderTint(ctx)
     setPlanBorderActive(true)
     // Source: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/plan-mode/index.ts
@@ -136,14 +130,12 @@ export class PlanningMode extends Mode {
       this.toolsBeforePlanMode = pi.getActiveTools()
     }
     pi.setActiveTools(getPlanModeTools(this.toolsBeforePlanMode))
-    ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("mdHeading", "⏸ plan"))
-    if (options?.notify !== false)
-      ctx.ui.notify("Plan mode enabled. Built-in write tools disabled.")
+    ctx.ui.setStatus(PLAN_MODE_STATUS_KEY, ctx.ui.theme.fg("mdHeading", "⏸ plan"))
   }
 
   public next = (): Mode => new DefaultMode(this.toolsBeforePlanMode)
 
-  public toState(): PlanModeState {
+  public toState(): ModeEntry {
     return {
       mode: "planning",
       plan: this.plan,
@@ -151,37 +143,16 @@ export class PlanningMode extends Mode {
     }
   }
 
-  // Validate and advance the phase; completionTool builds the tool result
-  // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (registerTool: plan_mode_complete)
-  public completePlan(params: PlanCompletionParams): string {
-    const parsed = normalizePlanCompletion(params.plan)
-    if (!parsed.ok) throw new Error(parsed.error)
-    this.plan = parsed.plan
-    return parsed.plan
-  }
+  public getPlan = (): string | undefined => this.plan
 
   public systemPrompt = (): string => PLAN_MODE_PROMPT
-
-  // Persist state after every planning turn (the plan itself arrives via the
-  // plan_complete tool call, not prose extraction)
-  public onAgentEnd = (pi: ExtensionAPI): void => pi.appendEntry("plan-mode", this.toState())
-
-  // The agent_settled menu is owed while a plan is staged
-  public shouldPromptApproval = (): boolean => this.plan !== undefined
-
-  // Handing the plan to its approval menu unstages it: the field wipes and
-  // the phase rests in explore until a refined plan re-enters approval via
-  // plan_complete
-  public unstagePlan(): void {
-    this.plan = undefined
-  }
 }
 
 // Choice labels are bound to constants and compared with === against the
 // same constants, so a label cannot drift from the check.
 // Source: https://github.com/bacnh85/pi-extensions/blob/main/pi-plan/extensions/index.ts (handlePlanApproval)
 const FRESH_CHOICE = "Execute in fresh session"
-const STAY_CHOICE = "Stay and refine the plan"
+const STAY_CHOICE = "Stay in plan mode"
 const EXIT_CHOICE = "Exit plan mode (plan stays in context)"
 
 // The stale-runtime messages a menu open across a session replacement can
@@ -194,59 +165,37 @@ const STALE_CTX_MESSAGES = [
 
 // Approval picker for a completed plan. Offered with or without a
 // fresh-session context - like narumiruna's ready menu, only the fresh
-// handoff is gated, never the choice itself. Returns the mode to keep live:
-// unchanged, or the exit choice's saved-in default.
+// handoff is gated, never the choice itself. Returns true on the exit
+// choice (the caller swaps to default); stay, Esc, and the fresh handoff
+// all keep planning.
 // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (agent_settled latestCommandContext ?? ctx)
 export async function promptPlanApproval(
-  pi: ExtensionAPI,
   ctx: ExtensionContext,
   freshContext: ExtensionCommandContext | undefined,
-  mode: Mode,
-): Promise<Mode> {
-  if (!mode.isPlanning() || !mode.plan) return mode
-
-  const menuPlan = mode.plan
-  // Unstaging resets the approval gate - the next agent_settled (queued
-  // follow-up delivered, refine turn) finds no staged plan and pops no menu,
-  // instead of re-stacking the picker
-  // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (readyPresentationIntent)
-  mode.unstagePlan()
-
+  plan: string,
+): Promise<boolean> {
   try {
     const choice = await ctx.ui.select("Plan mode - what next?", [
       FRESH_CHOICE,
       STAY_CHOICE,
       EXIT_CHOICE,
     ])
-    // Esc on the picker is a plain stay: undefined matches no choice below. The
-    // explicit stay opens the refinement editor, where an empty submit stays too.
-    if (choice === STAY_CHOICE) await refinePlan(pi, ctx)
-    if (choice === EXIT_CHOICE) return saveMode(pi, ctx, mode.next())
-    if (choice === FRESH_CHOICE) await startFreshHandoff(pi, ctx, freshContext, mode, menuPlan)
+    // Esc is a plain stay: undefined matches no choice below
+    if (choice === FRESH_CHOICE) await startFreshHandoff(ctx, freshContext, plan)
+    if (choice === STAY_CHOICE) ctx.ui.notify("/plan will prompt the approval.")
+    if (choice === EXIT_CHOICE) return true
   } catch (error: unknown) {
     if (!errorIncludes(error, STALE_CTX_MESSAGES)) throw error
   }
-  return mode
-}
-
-async function refinePlan(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-  const refinement = await ctx.ui.editor("Refine the plan:", "")
-  if (refinement?.trim()) pi.sendUserMessage(refinement.trim(), { deliverAs: "followUp" })
+  return false
 }
 
 export async function startFreshHandoff(
-  pi: ExtensionAPI,
   ctx: ExtensionContext,
   freshContext: ExtensionCommandContext | undefined,
-  current: PlanningMode,
-  menuPlan: string,
+  plan: string,
 ): Promise<void> {
-  // No command context means no newSession(). Restage the plan the menu
-  // consumed so /plan exec lands on a command context that starts the
-  // session directly; until then a settle re-presents the menu, like a
-  // session restored owing one
   if (!freshContext) {
-    current.plan = menuPlan
     ctx.ui.setEditorText("/plan exec")
     ctx.ui.notify(
       "Fresh sessions can only be started from a command - /plan exec is in the editor, press Enter to start it.",
@@ -254,7 +203,6 @@ export async function startFreshHandoff(
     )
     return
   }
-  pi.appendEntry("plan-mode", current.toState())
   // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/fresh-implementation.ts (startFreshImplementationSession)
-  await startFreshImplementation(freshContext, menuPlan)
+  await startFreshImplementation(freshContext, plan)
 }

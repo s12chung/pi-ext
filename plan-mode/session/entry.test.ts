@@ -1,13 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent"
+import type { SessionEntry } from "@earendil-works/pi-coding-agent"
 import { DefaultMode, type Mode, PlanningMode, promptPlanApproval } from "../mode.ts"
-import { PLAN, entryBase, planCompleteResult, stateEntry, userEntry } from "../utils/fixtures.ts"
-import { decodeSession } from "./decode.ts"
-import { restoreMode, saveMode } from "./entry.ts"
+import { PLAN, entryBase, planCompleteResult, stateEntry, uiFake } from "../utils/fixtures.ts"
+import { decodedState } from "./decode.ts"
+import { restoreMode } from "./entry.ts"
 
 // index.ts's wiring: decode at the boundary, restore from the typed result
-const restoreFromEntries = (entries: SessionEntry[]): Mode => restoreMode(decodeSession(entries))
+const restoreFromEntries = (entries: SessionEntry[]): Mode => restoreMode(decodedState(entries))
 
 test("returns default when no state entry exists", () => {
   assert.ok(restoreFromEntries([]).isDefault())
@@ -37,7 +37,8 @@ test("restores a default state with its tool snapshot", () => {
   assert.deepEqual(mode.toolsBeforePlanMode, ["read"])
 })
 
-test("recovers the plan from a plan_complete toolResult after the state entry", () => {
+test("ignores plan_complete toolResults after the state entry", () => {
+  // Recovery from toolResults is gone: the persisted plan field is the only source
   const mode = restoreFromEntries(
     stateEntry(
       { mode: "planning" },
@@ -45,40 +46,16 @@ test("recovers the plan from a plan_complete toolResult after the state entry", 
     ),
   )
   assert.ok(mode.isPlanning())
-  assert.equal(mode.plan, PLAN)
+  assert.equal((mode as PlanningMode).plan, undefined)
 })
 
-test("ignores plan_complete toolResults before the state entry", () => {
-  const mode = restoreFromEntries([
-    planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. Old" }),
-    ...stateEntry({ mode: "planning" }),
-  ])
-  assert.ok(mode.isPlanning())
-  assert.equal(mode.plan, undefined)
-})
-
-test("newest plan_complete toolResult wins", () => {
-  const entries = stateEntry(
-    { mode: "planning" },
-    planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. First" }),
-    userEntry,
-    planCompleteResult({ version: 1, source: "plan_complete", plan: "## 1. Second" }),
+test("persisted plans are kept without re-validation", () => {
+  // The plan was validated before it was persisted; a JSON round-trip cannot
+  // invalidate a string
+  assert.equal(
+    (restoreFromEntries(stateEntry({ mode: "planning", plan: "just prose" })) as PlanningMode).plan,
+    "just prose",
   )
-  assert.equal((restoreFromEntries(entries) as PlanningMode).plan, "## 1. Second")
-})
-
-test("invalid persisted plan falls back to toolResult recovery", () => {
-  const entries = stateEntry(
-    { mode: "planning", plan: "  " },
-    planCompleteResult({ version: 1, source: "plan_complete", plan: PLAN }),
-  )
-  assert.equal((restoreFromEntries(entries) as PlanningMode).plan, PLAN)
-})
-
-test("persisted plan without phase headings is ignored", () => {
-  const mode = restoreFromEntries(stateEntry({ mode: "planning", plan: "just prose" }))
-  assert.ok(mode.isPlanning())
-  assert.equal(mode.plan, undefined)
 })
 
 test("default state ignores a persisted planning plan", () => {
@@ -100,23 +77,17 @@ test("ignores toolResults from other tools", () => {
       details: { version: 1, source: "plan_complete", plan: PLAN },
     },
   }
-  assert.equal(
-    restoreFromEntries(stateEntry({ mode: "planning" }, bashResult)).shouldPromptApproval(),
-    false,
-  )
+  const mode = restoreFromEntries(stateEntry({ mode: "planning" }, bashResult))
+  assert.ok(mode.isPlanning())
+  assert.equal((mode as PlanningMode).plan, undefined)
 })
 
-test("migrates the pre-mode-objects enabled shape", () => {
-  const planning = restoreFromEntries(
+test("the legacy enabled shape no longer migrates to planning", () => {
+  const mode = restoreFromEntries(
     stateEntry({ enabled: true, plan: PLAN, toolsBeforePlanMode: ["read"] }),
   )
-  assert.ok(planning.isPlanning())
-  assert.equal(planning.plan, PLAN)
-  assert.deepEqual(planning.toolsBeforePlanMode, ["read"])
-
-  const handoff = restoreFromEntries(stateEntry({ enabled: false, toolsBeforePlanMode: ["read"] }))
-  assert.ok(handoff.isDefault())
-  assert.deepEqual(handoff.toolsBeforePlanMode, ["read"])
+  assert.ok(mode.isDefault())
+  assert.deepEqual(mode.toolsBeforePlanMode, ["read"])
 })
 
 test("toState round-trips through restoreMode", () => {
@@ -129,105 +100,32 @@ test("toState round-trips through restoreMode", () => {
   assert.deepEqual(restoreFromEntries(stateEntry(handoff.toState())).toState(), handoff.toState())
 })
 
-function planningWithPlan(): PlanningMode {
-  const planning = new PlanningMode()
-  planning.plan = PLAN
-  return planning
-}
-
-// Fakes covering what mode enter()/promptPlanApproval touch; hasUI stays off
-// so ensureBorderTint skips the editor wrap
-interface ApprovalFixture {
-  pi: ExtensionAPI
-  ctx: ExtensionContext
-  mode: Mode
-  entries: unknown[]
-  sent: Array<Record<string, unknown>>
-  editorTexts: string[]
-}
-
-function approvalFixture(
-  choice: string | undefined,
-  options?: { editor?: () => Promise<string | undefined> },
-): ApprovalFixture {
-  const entries: unknown[] = []
-  const sent: Array<Record<string, unknown>> = []
-  const editorTexts: string[] = []
-  const mode: Mode = planningWithPlan()
-  const pi = {
-    getActiveTools: () => ["read", "bash", "edit", "write"],
-    setActiveTools: () => {},
-    appendEntry: (_customType: string, data: unknown) => entries.push(data),
-    sendMessage: (message: Record<string, unknown>) => sent.push(message),
-    sendUserMessage: (text: string) => sent.push({ customType: "user", content: text }),
-  } as unknown as ExtensionAPI
-  const ctx = {
-    hasUI: false,
-    ui: {
-      select: (): Promise<string | undefined> => Promise.resolve(choice),
-      editor: options?.editor ?? ((): Promise<string | undefined> => Promise.resolve(undefined)),
-      notify: () => {},
-      setStatus: () => {},
-      setEditorText: (text: string) => editorTexts.push(text),
-      theme: { fg: (_role: string, text: string) => text },
-    },
-  } as unknown as ExtensionContext
-  return { pi, ctx, mode, entries, sent, editorTexts }
-}
-
-test("saveMode enters, persists, and returns the successor", () => {
-  const { pi, ctx, mode, entries } = approvalFixture(undefined)
-  ;(mode as PlanningMode).toolsBeforePlanMode = ["read"]
-  const next = saveMode(pi, ctx, mode.next())
-  assert.ok(next.isDefault())
-  assert.deepEqual(entries, [{ mode: "default", toolsBeforePlanMode: ["read"] }])
+test("approval menu: exit asks the caller to leave, persisting nothing itself", async () => {
+  const { ctx } = uiFake({ choice: "Exit plan mode (plan stays in context)" })
+  assert.equal(await promptPlanApproval(ctx, undefined, PLAN), true)
 })
 
-test("approval menu: stay opens the refinement editor, empty keeps planning", async () => {
-  const { pi, ctx, mode, entries, sent } = approvalFixture("Stay and refine the plan")
-  const result = await promptPlanApproval(pi, ctx, undefined, mode)
-  assert.ok(result.isPlanning())
-  assert.deepEqual(entries, [])
-  assert.deepEqual(sent, [])
+test("approval menu: stay keeps planning and opens nothing", async () => {
+  const { ctx, editors, notifies } = uiFake({ choice: "Stay in plan mode" })
+  assert.equal(await promptPlanApproval(ctx, undefined, PLAN), false)
+  assert.deepEqual(editors, [])
+  assert.deepEqual(notifies, ["/plan will prompt the approval."])
 })
 
-test("approval menu: exit saves the default and returns it", async () => {
-  const { pi, ctx, mode, entries } = approvalFixture("Exit plan mode (plan stays in context)")
-  const next = await promptPlanApproval(pi, ctx, undefined, mode)
-  assert.ok(next.isDefault())
-  assert.equal(entries.length, 1)
-  assert.equal((entries[0] as { mode: string }).mode, "default")
+test("approval menu: Esc is a plain stay", async () => {
+  const { ctx, notifies } = uiFake()
+  assert.equal(await promptPlanApproval(ctx, undefined, PLAN), false)
+  assert.deepEqual(notifies, [])
 })
 
-test("approval menu: stay sends the refinement as a follow-up", async () => {
-  const { pi, ctx, mode, sent } = approvalFixture("Stay and refine the plan", {
-    editor: () => Promise.resolve("make it faster"),
-  })
-  const result = await promptPlanApproval(pi, ctx, undefined, mode)
-  assert.ok(result.isPlanning())
-  assert.deepEqual(sent, [{ customType: "user", content: "make it faster" }])
-})
-
-test("approval menu: fresh without a command context restages the plan and prefills /plan exec", async () => {
-  const { pi, ctx, mode, entries, editorTexts } = approvalFixture("Execute in fresh session")
-  const result = await promptPlanApproval(pi, ctx, undefined, mode)
-  assert.ok(result.isPlanning())
-  // The restage keeps the menu owed until the prefilled /plan exec runs
-  assert.equal(result.plan, PLAN)
+test("approval menu: fresh without a command context prefills /plan exec", async () => {
+  const { ctx, editorTexts } = uiFake({ choice: "Execute in fresh session" })
+  assert.equal(await promptPlanApproval(ctx, undefined, PLAN), false)
   assert.deepEqual(editorTexts, ["/plan exec"])
-  assert.deepEqual(entries, [])
-})
-
-test("approval menu: without a plan it never opens", async () => {
-  const { pi, ctx, sent } = approvalFixture("Exit plan mode (plan stays in context)")
-  const exploring = new PlanningMode()
-  const result = await promptPlanApproval(pi, ctx, undefined, exploring)
-  assert.equal(result, exploring)
-  assert.deepEqual(sent, [])
 })
 
 test("promptPlanApproval swallows stale-context errors and rethrows others", async () => {
-  const { pi, ctx, mode, entries } = approvalFixture(undefined)
+  const { ctx } = uiFake()
   let thrown: Error | undefined
   const select = ctx.ui.select.bind(ctx.ui)
   ;(ctx.ui as { select: unknown }).select = async (): Promise<string | undefined> => {
@@ -238,10 +136,8 @@ test("promptPlanApproval swallows stale-context errors and rethrows others", asy
   thrown = new Error(
     "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx.",
   )
-  const result = await promptPlanApproval(pi, ctx, undefined, mode)
-  assert.ok(result.isPlanning())
-  assert.deepEqual(entries, [])
+  assert.equal(await promptPlanApproval(ctx, undefined, PLAN), false)
 
   thrown = new Error("boom")
-  await assert.rejects(promptPlanApproval(pi, ctx, undefined, planningWithPlan()), /boom/u)
+  await assert.rejects(promptPlanApproval(ctx, undefined, PLAN), /boom/u)
 })
