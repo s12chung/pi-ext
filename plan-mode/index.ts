@@ -14,6 +14,9 @@
  *   and it refuses to stage outside planning; questionnaire is general-purpose
  * - Plan submitted via plan_complete as free-flow markdown (format-validated)
  * - Plan stored in session memory (appendEntry) - no files, no drift
+ * - The planning model and thinking level ride into the fresh implementation
+ *   session through its first session entry, applied by that session's own
+ *   extension instance before its first request
  * - Cache-stable toggles: the tool set is reconciled once per session and the
  *   mode prompt rides as a request-local reminder (session/reminder.ts), so a
  *   toggle never rewrites the provider request prefix
@@ -28,6 +31,7 @@
 
 import type {
   AgentSettledEvent,
+  BeforeAgentStartEvent,
   ContextEvent,
   ContextEventResult,
   ExtensionAPI,
@@ -45,6 +49,7 @@ import {
 } from "./mode.ts"
 import { decodedMode } from "./session/decode.ts"
 import { appendEntry, restoreMode } from "./session/entry.ts"
+import { applyModelInfo } from "./session/fresh-implementation.ts"
 import { applyReminders } from "./session/reminder.ts"
 import { questionnaireTool } from "./tools/questionnaire.ts"
 import { debugLog } from "./utils/debug.ts"
@@ -137,6 +142,14 @@ function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionSt
     const messages = applyReminders(state.mode, state.justExitedPlan, event.messages)
     return messages && { messages }
   })
+
+  pi.on(
+    "before_agent_start",
+    async (_event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<void> => {
+      // applyModelInfo here because this session's pi is not accessible in ctx.newSession
+      await applyModelInfo(pi, ctx)
+    },
+  )
 
   // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (agent_settled)
   pi.on(

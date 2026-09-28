@@ -13,6 +13,7 @@ test("decodedState decodes every planning-state field", () => {
   assert.deepEqual(decodedMode(stateEntry({ mode: "planning", plan: PLAN })), {
     mode: "planning",
     plan: PLAN,
+    modelInfo: undefined,
   })
 })
 
@@ -20,13 +21,14 @@ test("decodedState decodes default-state fields and drops the legacy enabled sha
   assert.deepEqual(decodedMode(stateEntry({ mode: "default" })), {
     mode: "default",
     plan: undefined,
+    modelInfo: undefined,
   })
 
   // The enabled boolean and the stale tool snapshot no longer migrate:
-  // decode follows mode and plan only
+  // decode follows mode, plan, and model info only
   assert.deepEqual(
     decodedMode(stateEntry({ enabled: true, plan: PLAN, toolsBeforePlanMode: ["read"] })),
-    { mode: "default", plan: PLAN },
+    { mode: "default", plan: PLAN, modelInfo: undefined },
   )
 })
 
@@ -40,7 +42,58 @@ test("decodedState narrows structurally and drops unknown-shaped fields", () => 
         toolsBeforePlanMode: ["read", "", 7],
       }),
     ),
-    { mode: "planning", plan: undefined },
+    { mode: "planning", plan: undefined, modelInfo: undefined },
+  )
+})
+
+test("decodedState decodes a transferred runtime", () => {
+  assert.deepEqual(
+    decodedMode(
+      stateEntry({
+        mode: "default",
+        modelInfo: {
+          model: { provider: "anthropic", id: "planning-model" },
+          thinkingLevel: "high",
+        },
+      }),
+    ),
+    {
+      mode: "default",
+      plan: undefined,
+      modelInfo: { model: { provider: "anthropic", id: "planning-model" }, thinkingLevel: "high" },
+    },
+  )
+})
+
+test("decodedState narrows the model info and drops its unknown-shaped fields", () => {
+  assert.deepEqual(
+    decodedMode(
+      stateEntry({
+        mode: "default",
+        modelInfo: { model: { provider: "anthropic", id: "x" }, plan: 42 },
+      }),
+    )?.modelInfo,
+    { model: { provider: "anthropic", id: "x" }, thinkingLevel: undefined },
+  )
+
+  // Model info without a decodable model is no model info at all
+  assert.equal(
+    decodedMode(stateEntry({ mode: "default", modelInfo: { thinkingLevel: "high", plan: 42 } }))
+      ?.modelInfo,
+    undefined,
+  )
+  assert.equal(
+    decodedMode(
+      stateEntry({
+        mode: "default",
+        modelInfo: { model: { provider: 1, id: "planning-model" }, thinkingLevel: "turbo" },
+      }),
+    )?.modelInfo,
+    undefined,
+  )
+  assert.equal(
+    decodedMode(stateEntry({ mode: "default", modelInfo: { model: "anthropic" } }))?.modelInfo,
+    undefined,
   )
 })
 

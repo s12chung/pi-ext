@@ -6,14 +6,33 @@
  * the persisted entries; the unknown payloads never leave that boundary.
  */
 
-import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent"
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core"
+import type { ExtensionAPI, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent"
 import { DefaultMode, type Mode, PlanningMode } from "../mode.ts"
+
+export interface ModeEntry {
+  mode: "default" | "planning"
+  plan?: string
+  modelInfo?: ModelInfo
+}
+
+export interface ModelInfo {
+  model: { provider: string; id: string }
+  thinkingLevel?: ThinkingLevel
+}
 
 const PLAN_MODE_ENTRY_TYPE = "plan-mode"
 
 // The write path: callers persist a state without naming the custom entry type
 export function appendEntry(pi: ExtensionAPI, modeEntry: ModeEntry): void {
   pi.appendEntry(PLAN_MODE_ENTRY_TYPE, modeEntry)
+}
+
+// The write path into a session under construction: newSession hands its
+// session manager to setup before any extension instance of that session
+// exists, so the handoff persists through the manager directly
+export function appendEntryTo(sessionManager: SessionManager, modeEntry: ModeEntry): void {
+  sessionManager.appendCustomEntry(PLAN_MODE_ENTRY_TYPE, modeEntry)
 }
 
 // The read path: the newest plan-mode entry, undefined when none persists
@@ -23,13 +42,6 @@ export function getEntry(entries: SessionEntry[]): SessionEntry | undefined {
     if (entry.type === "custom" && entry.customType === PLAN_MODE_ENTRY_TYPE) return entry
   }
   return undefined
-}
-
-export interface ModeEntry {
-  mode: "default" | "planning"
-  // While planning (approval iff present - index.ts's completionTool callback
-  // is the only plan-setter)
-  plan?: string
 }
 
 // Source (adapted: latestPlan/activeImplementation plan strings → mode objects):

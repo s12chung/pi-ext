@@ -5,7 +5,9 @@
  */
 
 import type { AgentToolResult, SessionEntry } from "@earendil-works/pi-coding-agent"
-import { type ModeEntry, getEntry } from "./entry.ts"
+import { type ModeEntry, type ModelInfo, getEntry } from "./entry.ts"
+
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 
 // The newest plan-mode entry, narrowed; undefined when none persists. Every
 // declared ModeEntry field gets an explicit narrow and unknown fields are
@@ -16,6 +18,18 @@ export function decodedMode(entries: SessionEntry[]): ModeEntry | undefined {
   return {
     mode: entry.data.mode === "planning" ? "planning" : "default",
     plan: typeof entry.data.plan === "string" ? entry.data.plan : undefined,
+    modelInfo: decodeModelInfo(entry.data.modelInfo),
+  }
+}
+
+function decodeModelInfo(value: unknown): ModelInfo | undefined {
+  if (!isRecord(value) || !isRecord(value.model)) return undefined
+  if (typeof value.model.provider !== "string" || typeof value.model.id !== "string") {
+    return undefined
+  }
+  return {
+    model: { provider: value.model.provider, id: value.model.id },
+    thinkingLevel: THINKING_LEVELS.find((level) => level === value.thinkingLevel),
   }
 }
 
