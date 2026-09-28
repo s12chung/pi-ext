@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent"
-import { DefaultMode, type Mode, PlanningMode } from "../mode.ts"
+import { DefaultMode, type Mode, PlanningMode, promptPlanApproval } from "../mode.ts"
 import { PLAN, entryBase, planCompleteResult, stateEntry, userEntry } from "../utils/fixtures.ts"
 import { decodeSession } from "./decode.ts"
-import { promptPlanApproval, restoreMode, setMode } from "./state.ts"
+import { restoreMode, saveMode } from "./entry.ts"
 
 // index.ts's wiring: decode at the boundary, restore from the typed result
 const restoreFromEntries = (entries: SessionEntry[]): Mode => restoreMode(decodeSession(entries))
@@ -175,10 +175,10 @@ function approvalFixture(
   return { pi, ctx, mode, entries, sent, editorTexts }
 }
 
-test("setMode enters, persists, and returns the successor", () => {
+test("saveMode enters, persists, and returns the successor", () => {
   const { pi, ctx, mode, entries } = approvalFixture(undefined)
   ;(mode as PlanningMode).toolsBeforePlanMode = ["read"]
-  const next = setMode(pi, ctx, mode.next())
+  const next = saveMode(pi, ctx, mode.next())
   assert.ok(next.isDefault())
   assert.deepEqual(entries, [{ mode: "default", toolsBeforePlanMode: ["read"] }])
 })
@@ -191,7 +191,7 @@ test("approval menu: stay opens the refinement editor, empty keeps planning", as
   assert.deepEqual(sent, [])
 })
 
-test("approval menu: exit returns the swapped-in default and persists", async () => {
+test("approval menu: exit saves the default and returns it", async () => {
   const { pi, ctx, mode, entries } = approvalFixture("Exit plan mode (plan stays in context)")
   const next = await promptPlanApproval(pi, ctx, undefined, mode)
   assert.ok(next.isDefault())

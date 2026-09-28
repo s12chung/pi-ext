@@ -10,7 +10,7 @@
 import type { AgentToolResult, CustomEntry, SessionEntry } from "@earendil-works/pi-coding-agent"
 import { PLAN_COMPLETE_TOOL_NAME, PLAN_COMPLETE_VERSION } from "../tools/names.ts"
 import { normalizePlanCompletion } from "../tools/plan.ts"
-import type { PlanModeState } from "./state.ts"
+import type { PlanModeState } from "./entry.ts"
 
 export interface DecodedSession {
   // The newest plan-mode state entry, decoded; undefined when none persists

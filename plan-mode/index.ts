@@ -11,11 +11,12 @@
  * - Plan submitted via plan_complete as free-flow markdown (format-validated)
  * - Plan stored in session memory (appendEntry) - no files, no drift
  *
- * The mode objects (mode.ts) own the tool set, UI, and event behavior;
- * state.ts swaps them, resolves the approval menu, and persists them;
- * decode.ts turns persisted session entries into typed state - the only
- * module that sees their unknown payloads. This module is the wiring:
- * commands, events, and session lifecycle.
+ * The mode objects (mode.ts) own the tool set, UI, event behavior, and the
+ * approval menu; entry.ts is the persisted session entry - its typed shape
+ * and the save/restore of the live mode objects; decode.ts turns persisted
+ * session entries into typed shapes - the only module that sees their
+ * unknown payloads. This module is the wiring: commands, events, and session
+ * lifecycle.
  */
 
 import type {
@@ -27,10 +28,16 @@ import type {
   RegisteredCommand,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent"
-import { DefaultMode, type Mode, completionTool } from "./mode.ts"
+import {
+  DefaultMode,
+  type Mode,
+  completionTool,
+  promptPlanApproval,
+  startFreshHandoff,
+} from "./mode.ts"
 import { decodeSession } from "./session/decode.ts"
+import { restoreMode, saveMode } from "./session/entry.ts"
 import { safeSetSection } from "./session/prompt.ts"
-import { promptPlanApproval, restoreMode, setMode, startFreshHandoff } from "./session/state.ts"
 import { questionnaireTool } from "./tools/questionnaire.ts"
 import { debugLog } from "./utils/debug.ts"
 
@@ -86,7 +93,7 @@ function planCommand(
         state.mode = await promptPlanApproval(pi, ctx, ctx, state.mode)
         return
       }
-      state.mode = setMode(pi, ctx, state.mode.next())
+      state.mode = saveMode(pi, ctx, state.mode.next())
     },
   }
 }
