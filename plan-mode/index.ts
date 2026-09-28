@@ -1,27 +1,34 @@
 /**
  * Plan Mode Extension
  *
- * Read-only exploration mode for safe code analysis.
- * When enabled, built-in write tools are disabled.
+ * Read-only exploration mode for safe code analysis. Planning is
+ * soft-enforced: the reminder directs the agent to leave the workspace
+ * unchanged, and there are no code-level tool locks, so the prompt's ONLY
+ * exception - experiments mutating inside a temporary folder - stays
+ * possible.
  *
  * Features:
  * - /plan command to toggle
- * - Bash kept read-only through the plan-mode prompt (soft enforcement)
- * - Plan-only tools (questionnaire, plan_complete) active only while planning
+ * - Read-only planning through the plan-mode reminder (soft enforcement)
+ * - plan_complete is always available but described for plan-mode use only,
+ *   and it refuses to stage outside planning; questionnaire is general-purpose
  * - Plan submitted via plan_complete as free-flow markdown (format-validated)
  * - Plan stored in session memory (appendEntry) - no files, no drift
+ * - Cache-stable toggles: the tool set is reconciled once per session and the
+ *   mode prompt rides as a request-local reminder (session/reminder.ts), so a
+ *   toggle never rewrites the provider request prefix
  *
- * The mode objects (mode.ts) own the tool set, UI, event behavior, and the
- * approval menu; entry.ts is the persisted session entry - its typed shape
- * and the restore of the live mode objects; decode.ts turns persisted
- * session entries into typed shapes - the only module that sees their
- * unknown payloads. This module is the wiring: commands, events, and session
- * lifecycle.
+ * The mode objects (mode.ts) own the UI and the approval menu; reminder.ts
+ * places the mode prompt; entry.ts is the persisted session entry - its typed
+ * shape and the restore of the live mode objects; decode.ts turns persisted
+ * session entries into typed shapes - the only module that sees their unknown
+ * payloads. This module is the wiring: commands, events, and session lifecycle.
  */
 
 import type {
   AgentSettledEvent,
-  BeforeAgentStartEvent,
+  ContextEvent,
+  ContextEventResult,
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
@@ -37,14 +44,16 @@ import {
 } from "./mode.ts"
 import { decodedState } from "./session/decode.ts"
 import { PLAN_MODE_ENTRY_TYPE, restoreMode } from "./session/entry.ts"
-import { safeSetSection } from "./session/prompt.ts"
+import { applyReminders } from "./session/reminder.ts"
 import { questionnaireTool } from "./tools/questionnaire.ts"
 import { debugLog } from "./utils/debug.ts"
+import { reconcileToolSet } from "./utils/tool-set.ts"
 
-// The mutable state the registration helpers share: the live mode and the
-// freshest command context
+// The mutable state the registration helpers share: the live mode, the exit
+// flag the reminder reads, and the freshest command context
 interface PlanModeExtensionState {
   mode: Mode
+  justExitedPlan: boolean
   latestCommandContext: ExtensionCommandContext | undefined
 }
 
@@ -53,8 +62,9 @@ function enterNextMode(
   ctx: ExtensionContext,
   state: PlanModeExtensionState,
 ): void {
+  state.justExitedPlan = state.mode.isPlanning()
   state.mode = state.mode.next()
-  state.mode.enter(pi, ctx)
+  state.mode.enter(ctx)
   ctx.ui.notify(state.mode.enterNotice)
   pi.appendEntry(PLAN_MODE_ENTRY_TYPE, state.mode.toState())
 }
@@ -62,6 +72,7 @@ function enterNextMode(
 export default function planModeExtension(pi: ExtensionAPI): void {
   const state: PlanModeExtensionState = {
     mode: new DefaultMode(),
+    justExitedPlan: false,
     latestCommandContext: undefined,
   }
 
@@ -117,15 +128,15 @@ function planCommand(
 }
 
 function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionState): void {
-  // Install the mode's system-prompt section for the upcoming run; pi diffs
-  // it in on the first planning run and out on the next default run
-  pi.on("before_agent_start", (event: BeforeAgentStartEvent, _ctx: ExtensionContext): void => {
-    safeSetSection(state.mode.systemPrompt(), event.systemPromptOptions.sections)
+  // Deliberately no tool_call gate: blocking edit/write while planning would
+  // contradict the reminder's ONLY exception (experiments may mutate inside a
+  // temporary folder), and blocking the helpers outside planning would make
+  // the loadout mode-dependent again.
+  pi.on("context", (event: ContextEvent): ContextEventResult | undefined => {
+    const messages = applyReminders(state.mode, state.justExitedPlan, event.messages)
+    return messages && { messages }
   })
 
-  // Present the approval menu once the agent truly settles - not between a
-  // turn end and delivery of still-queued follow-up messages, which would
-  // stack a second menu behind the first
   // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/plan-mode.ts (agent_settled)
   pi.on(
     "agent_settled",
@@ -150,13 +161,22 @@ function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState
     state.latestCommandContext = undefined
   })
 
-  // Restore state on session start/resume from session memory (appendEntry).
   // Runs on session replacement too (newSession/fork/switch): saved state is
   // authoritative so the replaced session's mode/plan cannot leak.
   pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext): void => {
     debugLog("session_start", { reason: event.reason })
     state.latestCommandContext = undefined
+    state.justExitedPlan = false
     state.mode = restoreMode(decodedState(ctx.sessionManager.getEntries()))
-    state.mode.enter(pi, ctx)
+    state.mode.enter(ctx)
+
+    // opencode hides the plan_exit tool per agent (permission-denied out
+    // of the request in build mode), so every plan<->build switch reshapes
+    // the tools array - the first block of the provider cache prefix (tools
+    // -> system -> messages) - all cache breakpoints miss, and the full
+    // transcript is re-read and re-written at input price.
+    // Source: https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src
+    // (agent/agent.ts, session/llm/request.ts, provider/transform.ts)
+    pi.setActiveTools(reconcileToolSet(pi.getActiveTools()))
   })
 }

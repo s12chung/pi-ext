@@ -9,7 +9,7 @@
 // plan format (numbered markdown headings + verification) adapted from
 // opencode's plan-mode prompt (Phase 4); the count cap and
 // broad-strokes-only rule are local:
-// https://github.com/sst/opencode/blob/main/packages/opencode/src/session/prompt/plan-mode.txt
+// https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/prompt/plan-mode.txt
 export const PLAN_FORMAT_DESCRIPTION =
   'The decision-ready plan as free-flow markdown: numbered phase headings ("## 1. Short title"), each followed by its description. Include the paths of critical files to be modified; end with a verification phase.'
 

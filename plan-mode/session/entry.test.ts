@@ -16,13 +16,12 @@ test("returns default when no state entry exists", () => {
   )
 })
 
-test("restores a planning state in approval with its plan", () => {
+test("restores a planning state in approval with its plan, ignoring stale tool fields", () => {
   const mode = restoreFromEntries(
     stateEntry({ mode: "planning", plan: PLAN, toolsBeforePlanMode: ["read"] }),
   )
   assert.ok(mode.isPlanning())
   assert.equal(mode.plan, PLAN)
-  assert.deepEqual(mode.toolsBeforePlanMode, ["read"])
 })
 
 test("restores an explore planning state without a plan", () => {
@@ -31,10 +30,9 @@ test("restores an explore planning state without a plan", () => {
   assert.equal(mode.plan, undefined)
 })
 
-test("restores a default state with its tool snapshot", () => {
+test("restores a default state, ignoring stale tool fields", () => {
   const mode = restoreFromEntries(stateEntry({ mode: "default", toolsBeforePlanMode: ["read"] }))
   assert.ok(mode.isDefault())
-  assert.deepEqual(mode.toolsBeforePlanMode, ["read"])
 })
 
 test("ignores plan_complete toolResults after the state entry", () => {
@@ -87,16 +85,14 @@ test("the legacy enabled shape no longer migrates to planning", () => {
     stateEntry({ enabled: true, plan: PLAN, toolsBeforePlanMode: ["read"] }),
   )
   assert.ok(mode.isDefault())
-  assert.deepEqual(mode.toolsBeforePlanMode, ["read"])
 })
 
 test("toState round-trips through restoreMode", () => {
   const planning = new PlanningMode()
   planning.plan = PLAN
-  planning.toolsBeforePlanMode = ["read"]
   assert.deepEqual(restoreFromEntries(stateEntry(planning.toState())).toState(), planning.toState())
 
-  const handoff = new DefaultMode(["read"])
+  const handoff = new DefaultMode()
   assert.deepEqual(restoreFromEntries(stateEntry(handoff.toState())).toState(), handoff.toState())
 })
 

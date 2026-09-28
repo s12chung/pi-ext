@@ -10,23 +10,23 @@ test("decodedState returns no state without a plan-mode entry", () => {
 })
 
 test("decodedState decodes every planning-state field", () => {
-  assert.deepEqual(
-    decodedState(stateEntry({ mode: "planning", plan: PLAN, toolsBeforePlanMode: ["read"] })),
-    { mode: "planning", plan: PLAN, toolsBeforePlanMode: ["read"] },
-  )
+  assert.deepEqual(decodedState(stateEntry({ mode: "planning", plan: PLAN })), {
+    mode: "planning",
+    plan: PLAN,
+  })
 })
 
 test("decodedState decodes default-state fields and drops the legacy enabled shape", () => {
-  assert.deepEqual(decodedState(stateEntry({ mode: "default", toolsBeforePlanMode: ["read"] })), {
+  assert.deepEqual(decodedState(stateEntry({ mode: "default" })), {
     mode: "default",
     plan: undefined,
-    toolsBeforePlanMode: ["read"],
   })
 
-  // The enabled boolean no longer migrates: decode follows mode only
+  // The enabled boolean and the stale tool snapshot no longer migrate:
+  // decode follows mode and plan only
   assert.deepEqual(
     decodedState(stateEntry({ enabled: true, plan: PLAN, toolsBeforePlanMode: ["read"] })),
-    { mode: "default", plan: PLAN, toolsBeforePlanMode: ["read"] },
+    { mode: "default", plan: PLAN },
   )
 })
 
@@ -40,7 +40,7 @@ test("decodedState narrows structurally and drops unknown-shaped fields", () => 
         toolsBeforePlanMode: ["read", "", 7],
       }),
     ),
-    { mode: "planning", plan: undefined, toolsBeforePlanMode: undefined },
+    { mode: "planning", plan: undefined },
   )
 })
 

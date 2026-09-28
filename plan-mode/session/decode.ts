@@ -28,15 +28,7 @@ function decodeStateData(data: unknown): ModeEntry | undefined {
   return {
     mode: data.mode === "planning" ? "planning" : "default",
     plan: typeof data.plan === "string" ? data.plan : undefined,
-    toolsBeforePlanMode: decodeStringArray(data.toolsBeforePlanMode),
   }
-}
-
-function decodeStringArray(value: unknown): string[] | undefined {
-  return Array.isArray(value) &&
-    value.every((item): item is string => typeof item === "string" && item.trim().length > 0)
-    ? value
-    : undefined
 }
 
 // Source (adapted: planModeCompletionMarkdown → toolResultText, generic over any

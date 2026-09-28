@@ -1,66 +1,32 @@
 /**
- * Active-tool-set selection: plan mode's read/write tool gating and keeping
- * the plan-only helpers out of normal mode.
+ * The constant session tool set: session_start reconciles pi's active loadout
+ * into a byte-stable union (active tools first, then the additions in
+ * canonical order) and never touches it again, so plan toggles cannot rewrite
+ * the request's tool array - the first provider cache block.
  */
 
 import { PLAN_COMPLETE_TOOL_NAME, QUESTIONNAIRE_TOOL_NAME } from "../tools/names.ts"
 
-// pi auto-activates every registerTool() call with no opt-out flag, so plan_complete
-// (and questionnaire, bundled in tools/questionnaire.ts from pi's example)
-// leaks into the active set at startup. narumiruna's required-helpers pattern keeps them
-// plan-mode-only so their schemas cannot pollute normal-mode context and make the model
-// think it is planning.
+// pi auto-activates every registerTool() call with no opt-out flag, so the
+// plan-only helpers start out active. They stay in the constant set instead of
+// being hidden per mode; their descriptions mark them plan-mode only, and
+// plan_complete refuses to stage outside planning.
 // Source: https://github.com/narumiruna/pi-extensions/blob/main/packages/pi-plan-mode/src/required-tools.ts
-// (REQUIRED_PLAN_MODE_TOOL_NAMES, withRequiredPlanModeTools, withoutRequiredPlanModeTools)
-
+// (REQUIRED_PLAN_MODE_TOOL_NAMES)
 export const REQUIRED_PLAN_MODE_TOOL_NAMES = [
   QUESTIONNAIRE_TOOL_NAME,
   PLAN_COMPLETE_TOOL_NAME,
 ] as const
 
-const uniqueToolNames = (toolNames: string[]): string[] => [...new Set(toolNames)]
+// Exploration tools pi does not enable by default; the old per-mode swap was
+// the only thing adding them, and dropping them again would churn the prefix.
+export const EXPLORATION_TOOL_NAMES = ["grep", "find", "ls"] as const
 
-export function withRequiredPlanModeTools(toolNames: string[]): string[] {
-  return uniqueToolNames([
-    ...withoutRequiredPlanModeTools(toolNames),
-    QUESTIONNAIRE_TOOL_NAME,
-    PLAN_COMPLETE_TOOL_NAME,
-  ])
-}
-
-export function withoutRequiredPlanModeTools(toolNames: string[]): string[] {
-  return toolNames.filter(
-    (toolName) => toolName !== QUESTIONNAIRE_TOOL_NAME && toolName !== PLAN_COMPLETE_TOOL_NAME,
-  )
-}
-
-// Source: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/plan-mode/index.ts (Tools)
-// questionnaire/plan_complete are owned by the required-helpers block above instead of PLAN_MODE_TOOLS
-const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls"]
-const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"]
-const PLAN_MODE_DISABLED_TOOLS = new Set<string>(["edit", "write"])
-const PLAN_MANAGED_TOOLS = new Set<string>([
-  ...PLAN_MODE_TOOLS,
-  ...REQUIRED_PLAN_MODE_TOOL_NAMES,
-  ...NORMAL_MODE_TOOLS,
-])
-
-// Source: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/plan-mode/index.ts (getPlanModeTools)
-// wrapped in withRequiredPlanModeTools to append the helpers in canonical order
-export function getPlanModeTools(activeToolNames: string[]): string[] {
-  return withRequiredPlanModeTools(
-    uniqueToolNames([
-      ...activeToolNames.filter((name) => !PLAN_MODE_DISABLED_TOOLS.has(name)),
-      ...PLAN_MODE_TOOLS,
-    ]),
-  )
-}
-
-// Source: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/plan-mode/index.ts (getNormalModeTools)
-// the helpers drop out because PLAN_MANAGED_TOOLS spans REQUIRED_PLAN_MODE_TOOL_NAMES
-export function getNormalModeTools(activeToolNames: string[]): string[] {
-  return uniqueToolNames([
-    ...NORMAL_MODE_TOOLS,
-    ...activeToolNames.filter((name) => !PLAN_MANAGED_TOOLS.has(name)),
-  ])
+// The one reconcile per session: also repairs swap-era session resumes, whose
+// transcripts recorded per-mode loadouts (toolsAdded on the leading system
+// message) that pi restores verbatim.
+export function reconcileToolSet(activeToolNames: string[]): string[] {
+  return [
+    ...new Set([...activeToolNames, ...EXPLORATION_TOOL_NAMES, ...REQUIRED_PLAN_MODE_TOOL_NAMES]),
+  ]
 }

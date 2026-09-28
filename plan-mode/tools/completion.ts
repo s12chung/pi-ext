@@ -32,17 +32,21 @@ const COMPLETION_PARAMS = {
   },
 } as const
 
-// setActiveTools only toggles visibility of registered tools, so index.ts
-// registers this once at startup and execute stages the validated plan via
-// its setPlan callback
+// index.ts registers this once at startup - the helper stays in the constant
+// tool set (utils/tool-set.ts), its description marks it always-available but
+// for plan-mode use only, and execute stages the validated plan via its
+// setPlan callback only while planning
 export function completionTool(
   setPlan: (plan: string) => void,
 ): ToolDefinition<typeof COMPLETION_PARAMS, PlanCompletionDetails> {
   return {
     name: PLAN_COMPLETE_TOOL_NAME,
     label: "Complete plan",
+    // Source (adapted: plan-exit call/avoid bullets → prose description; its
+    // plan-file wording is dropped since the plan is the tool call itself):
+    // https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/tool/plan-exit.txt
     description:
-      "Use this tool when you have completed the planning phase and are ready to submit the plan. Call this tool: after you have written a complete plan, after you have clarified any questions with the user, when you are confident that the plan is ready for implementation. Do NOT call this tool: before you have finalized the plan, if you still have unanswered questions about the implementation, if the user has indicated that they want to continue planning.",
+      "Always available, but call it ONLY while plan mode is active. Only in plan mode, call this tool: after you have written a complete plan, after you have clarified any questions with the user, when you are confident that the plan is ready for implementation. Do NOT call this tool: before you have finalized the plan, if you still have unanswered questions about the implementation, if the user has indicated that they want to continue planning.",
     parameters: COMPLETION_PARAMS,
     execute(_toolCallId, params) {
       const plan = params.plan.trim()
