@@ -1,32 +1,13 @@
 /**
  * Plan Mode Extension
  *
- * Read-only exploration mode for safe code analysis. Planning is
- * soft-enforced: the reminder directs the agent to leave the workspace
- * unchanged, and there are no code-level tool locks, so the prompt's ONLY
- * exception - experiments mutating inside a temporary folder - stays
- * possible.
- *
- * Features:
- * - /plan command to toggle
- * - Read-only planning through the plan-mode reminder (soft enforcement)
- * - plan_complete is always available but described for plan-mode use only,
- *   and it refuses to stage outside planning; questionnaire is general-purpose
- * - Plan submitted via plan_complete as free-flow markdown (format-validated)
- * - Plan stored in session memory (appendEntry) - no files, no drift
- * - The planning model and thinking level ride into the fresh implementation
- *   session through its first session entry, applied by that session's own
- *   extension instance before its first request
- * - Cache-stable toggles: the tool set is reconciled once per session and the
- *   mode prompt rides as a request-local reminder (session/reminder.ts), so a
- *   toggle never rewrites the provider request prefix
- *
- * The mode objects (mode.ts) own the UI and the approval menu; reminder.ts
- * places the mode prompt; entry.ts is the persisted session entry - its typed
- * shape, the append/find of it, and the restore of the live mode objects;
- * decode.ts turns persisted session entries into typed shapes - the only
- * module that sees their unknown payloads. This module is the wiring: commands,
- * events, and session lifecycle.
+ * Read-only exploration mode, toggled by /plan: the agent explores and
+ * produces a decision-ready plan before any file changes. Enforcement is
+ * the mode reminder (no tool locks), which also keeps toggles cache-stable:
+ * it lands on the message tail and the tool set never changes, so toggling
+ * never breaks the cached request prefix. On approval, the plan hands off
+ * to a fresh session, leaving the planning transcript behind. This module
+ * is the wiring: commands, events, and session lifecycle.
  */
 
 import type {

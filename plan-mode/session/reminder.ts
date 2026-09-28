@@ -16,16 +16,10 @@ import type { Mode } from "../mode.ts"
 
 type Messages = ContextEvent["messages"]
 
-// opencode placement: mode instructions ride as a reminder appended to the
-// newest user message instead of a system-prompt section. A section diff
-// rewrites the cached system prefix on every toggle, while a tail reminder
-// re-reads only the always-uncached tail: at request time the tail message is
-// always user-role in the provider payload sense - fresh-turn user text, or
-// mid-run tool results - so the reminder rides every request and the
-// read-only-bash soft enforcement survives the whole run. Opening, read-only
-// constraint, tradeoffs questioning, and question-or-submit ending adapted
-// from opencode's plan-mode.txt and plan.txt - like opencode, read-only bash
-// is soft-enforced: this reminder is the only guard.
+// opencode placement: appending to the tail message keeps the cached prefix
+// intact while still riding every request - at request time the tail is always
+// user-role and uncached (fresh user text or tool results). Prompt content
+// adapted from opencode's plan-mode.txt / plan.txt.
 // https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/prompt/plan-mode.txt
 export const PLAN_MODE_PROMPT = `[PLAN MODE ACTIVE]
 The user indicated that they do not want you to execute yet -- you MUST NOT
@@ -43,12 +37,15 @@ workspace, and never as part of doing the planned work.
 Plan format - free-flow markdown, concise enough to scan quickly, but
 detailed enough to execute effectively:
 - Include only your recommended approach, not all alternatives
-- Break the work into a few phases, each opened by a numbered markdown
+- Break the work into one or more phases, each opened by a numbered markdown
   heading ("## 1. Short title", numbered sequentially from 1) followed by
   its description
+- A phase is a fully completed, decoupled unit of work - it delivers
+  something that works on its own, with no loose ends that only a later
+  phase ties off
 - Include the paths of critical files to be modified
-- End with a verification phase describing how to test the changes
-  end-to-end (run the code, run tests)
+- Each phase includes how to verify its changes end-to-end (run the
+  code, run tests)
 
 At the very end of your turn, once you have asked the user questions and
 are happy with your final plan, call the plan_complete tool alone, passing the

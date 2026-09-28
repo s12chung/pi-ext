@@ -11,7 +11,7 @@
 // broad-strokes-only rule are local:
 // https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/prompt/plan-mode.txt
 export const PLAN_FORMAT_DESCRIPTION =
-  'The decision-ready plan as free-flow markdown: numbered phase headings ("## 1. Short title"), each followed by its description. Include the paths of critical files to be modified; end with a verification phase.'
+  'The decision-ready plan as free-flow markdown: numbered phase headings ("## 1. Short title"), each followed by its description. Include the paths of critical files to be modified; each phase includes how to verify its changes.'
 
 // Stated only in validation errors, never in the prompt - a mentioned count
 // anchors the model into padding the plan to exactly that many phases
