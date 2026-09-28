@@ -26,7 +26,7 @@ export abstract class Mode {
   /** /plan toggle successor, carrying handoff data */
   public abstract next(): Mode
   /** Persisted shape; entry.ts reconstructs the objects from it */
-  public abstract toState(): ModeEntry
+  public abstract toEntry(): ModeEntry
   /** The toast a mode transition shows on entering this mode */
   public abstract readonly enterNotice: string
 
@@ -47,7 +47,7 @@ export class DefaultMode extends Mode {
 
   public next = (): Mode => new PlanningMode()
 
-  public toState(): ModeEntry {
+  public toEntry(): ModeEntry {
     return { mode: "default" }
   }
 }
@@ -68,7 +68,7 @@ export class PlanningMode extends Mode {
 
   public next = (): Mode => new DefaultMode()
 
-  public toState(): ModeEntry {
+  public toEntry(): ModeEntry {
     return { mode: "planning", plan: this.plan }
   }
 

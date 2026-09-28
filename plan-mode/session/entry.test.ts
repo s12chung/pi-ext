@@ -1,13 +1,46 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { SessionEntry } from "@earendil-works/pi-coding-agent"
+import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent"
 import { DefaultMode, type Mode, PlanningMode, promptPlanApproval } from "../mode.ts"
-import { PLAN, entryBase, planCompleteResult, stateEntry, uiFake } from "../utils/fixtures.ts"
-import { decodedState } from "./decode.ts"
-import { restoreMode } from "./entry.ts"
+import {
+  PLAN,
+  entryBase,
+  planCompleteResult,
+  stateEntry,
+  uiFake,
+  userEntry,
+} from "../utils/fixtures.ts"
+import { decodedMode } from "./decode.ts"
+import { type ModeEntry, appendEntry, getEntry, restoreMode } from "./entry.ts"
 
 // index.ts's wiring: decode at the boundary, restore from the typed result
-const restoreFromEntries = (entries: SessionEntry[]): Mode => restoreMode(decodedState(entries))
+const restoreFromEntries = (entries: SessionEntry[]): Mode => restoreMode(decodedMode(entries))
+
+test("getEntry returns undefined without a plan-mode entry", () => {
+  assert.equal(getEntry([]), undefined)
+  assert.equal(getEntry([userEntry]), undefined)
+})
+
+test("getEntry returns the newest plan-mode entry, skipping foreign custom entries", () => {
+  const older = stateEntry({ mode: "default" })[0]
+  const newer = stateEntry({ mode: "planning" })[0]
+  const foreign: SessionEntry = { type: "custom", customType: "other", data: {}, ...entryBase }
+  assert.equal(getEntry([older, newer, foreign]), newer)
+  assert.equal(getEntry([older, foreign, newer]), newer)
+})
+
+test("appendEntry persists the state under the plan-mode custom type", () => {
+  // index.test.ts's appendEntry recorder, standing in for pi
+  const persisted: Array<[string, unknown]> = []
+  const pi = {
+    appendEntry: (customType: string, data: unknown) => persisted.push([customType, data]),
+  } as unknown as ExtensionAPI
+  const state: ModeEntry = { mode: "planning", plan: PLAN }
+
+  appendEntry(pi, state)
+
+  assert.deepEqual(persisted, [["plan-mode", state]])
+})
 
 test("returns default when no state entry exists", () => {
   assert.ok(restoreFromEntries([]).isDefault())
@@ -90,10 +123,10 @@ test("the legacy enabled shape no longer migrates to planning", () => {
 test("toState round-trips through restoreMode", () => {
   const planning = new PlanningMode()
   planning.plan = PLAN
-  assert.deepEqual(restoreFromEntries(stateEntry(planning.toState())).toState(), planning.toState())
+  assert.deepEqual(restoreFromEntries(stateEntry(planning.toEntry())).toEntry(), planning.toEntry())
 
   const handoff = new DefaultMode()
-  assert.deepEqual(restoreFromEntries(stateEntry(handoff.toState())).toState(), handoff.toState())
+  assert.deepEqual(restoreFromEntries(stateEntry(handoff.toEntry())).toEntry(), handoff.toEntry())
 })
 
 test("approval menu: exit asks the caller to leave, persisting nothing itself", async () => {

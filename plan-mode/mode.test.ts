@@ -32,11 +32,11 @@ test("DefaultMode is permissive outside planning", () => {
 })
 
 test("toState shapes carry each mode's own fields", () => {
-  assert.deepEqual(new DefaultMode().toState(), { mode: "default" })
+  assert.deepEqual(new DefaultMode().toEntry(), { mode: "default" })
 
   const planning = new PlanningMode()
-  assert.deepEqual(planning.toState(), { mode: "planning", plan: undefined })
+  assert.deepEqual(planning.toEntry(), { mode: "planning", plan: undefined })
 
   planning.plan = PLAN
-  assert.deepEqual(planning.toState(), { mode: "planning", plan: PLAN })
+  assert.deepEqual(planning.toEntry(), { mode: "planning", plan: PLAN })
 })

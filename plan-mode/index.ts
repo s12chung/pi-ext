@@ -20,9 +20,10 @@
  *
  * The mode objects (mode.ts) own the UI and the approval menu; reminder.ts
  * places the mode prompt; entry.ts is the persisted session entry - its typed
- * shape and the restore of the live mode objects; decode.ts turns persisted
- * session entries into typed shapes - the only module that sees their unknown
- * payloads. This module is the wiring: commands, events, and session lifecycle.
+ * shape, the append/find of it, and the restore of the live mode objects;
+ * decode.ts turns persisted session entries into typed shapes - the only
+ * module that sees their unknown payloads. This module is the wiring: commands,
+ * events, and session lifecycle.
  */
 
 import type {
@@ -42,8 +43,8 @@ import {
   promptPlanApproval,
   startFreshHandoff,
 } from "./mode.ts"
-import { decodedState } from "./session/decode.ts"
-import { PLAN_MODE_ENTRY_TYPE, restoreMode } from "./session/entry.ts"
+import { decodedMode } from "./session/decode.ts"
+import { appendEntry, restoreMode } from "./session/entry.ts"
 import { applyReminders } from "./session/reminder.ts"
 import { questionnaireTool } from "./tools/questionnaire.ts"
 import { debugLog } from "./utils/debug.ts"
@@ -66,7 +67,7 @@ function enterNextMode(
   state.mode = state.mode.next()
   state.mode.enter(ctx)
   ctx.ui.notify(state.mode.enterNotice)
-  pi.appendEntry(PLAN_MODE_ENTRY_TYPE, state.mode.toState())
+  appendEntry(pi, state.mode.toEntry())
 }
 
 export default function planModeExtension(pi: ExtensionAPI): void {
@@ -83,7 +84,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       if (!mode.isPlanning())
         throw new Error("plan_complete is only available while plan mode is active")
       mode.plan = plan
-      pi.appendEntry(PLAN_MODE_ENTRY_TYPE, mode.toState())
+      appendEntry(pi, mode.toEntry())
     }),
   )
   pi.registerCommand("plan", planCommand(pi, state))
@@ -167,7 +168,7 @@ function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState
     debugLog("session_start", { reason: event.reason })
     state.latestCommandContext = undefined
     state.justExitedPlan = false
-    state.mode = restoreMode(decodedState(ctx.sessionManager.getEntries()))
+    state.mode = restoreMode(decodedMode(ctx.sessionManager.getEntries()))
     state.mode.enter(ctx)
 
     // opencode hides the plan_exit tool per agent (permission-denied out

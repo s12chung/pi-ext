@@ -1,15 +1,29 @@
 /**
- * The persisted plan-mode session entry: its typed shape (ModeEntry) and the
- * restore of the live mode objects from it (restoreMode). Restores consume
- * decode.ts's typed view of the persisted entries; the unknown payloads never
- * leave that boundary.
+ * The persisted plan-mode session entry: its typed shape (ModeEntry), the
+ * append of it into the session and the find of it among session entries (the
+ * only module naming the custom entry type), and the restore of the live mode
+ * objects from it (restoreMode). Restores consume decode.ts's typed view of
+ * the persisted entries; the unknown payloads never leave that boundary.
  */
 
-// Safe cycle with mode.ts (restoreMode here, its constructors there): each
-// side reaches across only inside function bodies
+import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent"
 import { DefaultMode, type Mode, PlanningMode } from "../mode.ts"
 
-export const PLAN_MODE_ENTRY_TYPE = "plan-mode"
+const PLAN_MODE_ENTRY_TYPE = "plan-mode"
+
+// The write path: callers persist a state without naming the custom entry type
+export function appendEntry(pi: ExtensionAPI, modeEntry: ModeEntry): void {
+  pi.appendEntry(PLAN_MODE_ENTRY_TYPE, modeEntry)
+}
+
+// The read path: the newest plan-mode entry, undefined when none persists
+export function getEntry(entries: SessionEntry[]): SessionEntry | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (entry.type === "custom" && entry.customType === PLAN_MODE_ENTRY_TYPE) return entry
+  }
+  return undefined
+}
 
 export interface ModeEntry {
   mode: "default" | "planning"
