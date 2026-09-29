@@ -4,8 +4,9 @@
  * Read-only exploration mode, toggled by /plan: the agent explores and
  * produces a decision-ready plan before any file changes. Enforcement is
  * the mode reminder (no tool locks), which also keeps toggles cache-stable:
- * it lands on the message tail and the tool set never changes, so toggling
- * never breaks the cached request prefix. On approval, the plan hands off
+ * it rides a system-prompt section installed once when planning begins
+ * and never removed (session/prompt.ts), and the tool set never changes,
+ * so toggling never breaks the cached request prefix. On approval, the plan hands off
  * to a fresh session, leaving the planning transcript behind. This module
  * is the wiring: commands, events, and session lifecycle.
  */
@@ -13,8 +14,6 @@
 import type {
   AgentSettledEvent,
   BeforeAgentStartEvent,
-  ContextEvent,
-  ContextEventResult,
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
@@ -32,17 +31,16 @@ import {
 import { decodedMode } from "./session/decode.ts"
 import { appendEntry, restoreMode } from "./session/entry.ts"
 import { applyModelInfo } from "./session/fresh-implementation.ts"
-import { applyReminders } from "./session/reminder.ts"
+import { safeSetSection } from "./session/prompt.ts"
 import { questionnaireTool } from "./tools/questionnaire.ts"
 import { debugLog } from "./utils/debug.ts"
 import { reconcileToolSet } from "./utils/tool-set.ts"
 
-// The mutable state the registration helpers share: the live mode, the exit
-// flag the reminder reads, the freshest command context, and the load-time
-// config warning still owed its one-time notify
+// The mutable state the registration helpers share: the live mode, the
+// freshest command context, and the load-time config warning still owed its
+// one-time notify
 interface PlanModeExtensionState {
   mode: Mode
-  justExitedPlan: boolean
   latestCommandContext: ExtensionCommandContext | undefined
   configWarning: string | undefined
 }
@@ -52,22 +50,31 @@ function enterNextMode(
   ctx: ExtensionContext,
   state: PlanModeExtensionState,
 ): void {
-  state.justExitedPlan = state.mode.isPlanning()
+  const wasPlanning = state.mode.isPlanning()
   state.mode = state.mode.next()
   state.mode.enter(ctx)
   ctx.ui.notify(state.mode.enterNotice)
   appendEntry(pi, state.mode.toEntry())
+
+  // The exit note rides one persisted message instead of request-local
+  // appends, for the same cache reason as the section (session/prompt.ts);
+  // opencode's BUILD_SWITCH is the per-request variant of this note
+  if (wasPlanning && !state.mode.isPlanning())
+    pi.sendMessage({
+      customType: "plan-mode-ended",
+      content: PROMPTS.planModeEndedPrompt,
+      display: false,
+    })
 }
 
 export default function planModeExtension(pi: ExtensionAPI): void {
   // The one load: overlays plan-mode.json onto the PROMPTS the tools and
-  // reminders import; /reload re-runs this factory, so edits apply
+  // the mode section import; /reload re-runs this factory, so edits apply
   const { prompts, warning } = loadPrompts()
   Object.assign(PROMPTS, prompts)
 
   const state: PlanModeExtensionState = {
     mode: new DefaultMode(),
-    justExitedPlan: false,
     latestCommandContext: undefined,
     configWarning: warning,
   }
@@ -127,14 +134,10 @@ function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionSt
   // contradict the reminder's ONLY exception (experiments may mutate inside a
   // temporary folder), and blocking the helpers outside planning would make
   // the loadout mode-dependent again.
-  pi.on("context", (event: ContextEvent): ContextEventResult | undefined => {
-    const messages = applyReminders(state.mode, state.justExitedPlan, event.messages)
-    return messages && { messages }
-  })
-
   pi.on(
     "before_agent_start",
-    async (_event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<void> => {
+    async (event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<void> => {
+      safeSetSection(state.mode.systemPrompt(), event.systemPromptOptions.sections)
       // applyModelInfo here because this session's pi is not accessible in ctx.newSession
       await applyModelInfo(pi, ctx)
     },
@@ -169,7 +172,6 @@ function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState
   pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext): void => {
     debugLog("session_start", { reason: event.reason })
     state.latestCommandContext = undefined
-    state.justExitedPlan = false
 
     // The load-time config warning surfaces once, on the first start
     if (state.configWarning) {

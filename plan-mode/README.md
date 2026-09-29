@@ -2,7 +2,7 @@
 
 Read-only exploration mode for [pi](https://github.com/earendil-works/pi): the agent explores code and produces a decision-ready plan before any file changes. Toggle it with `/plan`.
 
-- **Soft enforcement, cache-stable** — the mode prompt directs the agent to leave the workspace unchanged (experiments inside a temporary folder are allowed); there are no tool locks. The prompt lands on the message tail and the tool array never changes, so toggling never breaks the cached request prefix.
+- **Soft enforcement, cache-stable** — the mode prompt directs the agent to leave the workspace unchanged (experiments inside a temporary folder are allowed); there are no tool locks. The prompt is written once as part of the system-prompt and the tool array never changes, so the cached request prefix survives toggles intact.
 - **Handoff to a fresh session, no lingering artifacts** — on approval, execution starts in a fresh session whose kickoff prompt embeds the plan; the planning transcript and plan-mode state stay behind in the parent session.
 
 ## Install
@@ -24,8 +24,8 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 
 All the prompts, including the tool descriptions, can be overwritten from `<agent-dir>/plan-mode.json` (agent dir: `PI_CODING_AGENT_DIR` or `~/.pi/agent`):
 
-- `planModePrompt` - appended to every request while planning
-- `planModeEndedPrompt` - appended to requests right after leaving plan mode
+- `planModePrompt` - the system-prompt section installed when planning begins (it stays for the session)
+- `planModeEndedPrompt` - the one-time message sent when leaving plan mode
 - `planCompleteDescription` - the `plan_complete` tool description
 - `planFormatDescription` - what the `plan_complete` plan parameter should contain
 - `questionnaireDescription` - the `questionnaire` tool description

@@ -4,6 +4,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
+  SessionEntry,
 } from "@earendil-works/pi-coding-agent"
 import planModeExtension from "./index.ts"
 import { PLAN, agentDirWith, stateEntry, uiFake, withAgentDirEnv } from "./utils/fixtures.ts"
@@ -18,14 +19,19 @@ type RegisteredCommand = {
 }
 
 // Fakes for planModeExtension's registration surface; entries records what the
-// extension persists, activeToolSets records the reconcile calls
+// extension persists, sentMessages the custom messages it sends, and
+// activeToolSets the reconcile calls
 interface ExtensionFixture {
   tool: (name: string) => RegisteredTool
   command: (name: string) => RegisteredCommand
   sessionStart: (ctx: ExtensionContext) => void
-  context: (messages: unknown) => { messages?: unknown[] } | undefined
+  beforeAgentStart: (entries?: SessionEntry[]) => Promise<Record<string, string>>
   activeToolSets: string[][]
   entries: Array<[string, unknown]>
+  sentMessages: Array<{
+    message: { customType: string; content: string; display: boolean }
+    options: unknown
+  }>
 }
 
 function extension(): ExtensionFixture {
@@ -34,6 +40,7 @@ function extension(): ExtensionFixture {
   const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>()
   const entries: Array<[string, unknown]> = []
   const activeToolSets: string[][] = []
+  const sentMessages: ExtensionFixture["sentMessages"] = []
   const pi = {
     registerTool: (tool: RegisteredTool) => tools.set(tool.name, tool),
     registerCommand: (name: string, command: RegisteredCommand) => commands.set(name, command),
@@ -42,12 +49,17 @@ function extension(): ExtensionFixture {
     getActiveTools: () => ["read", "bash"],
     setActiveTools: (toolNames: string[]) => activeToolSets.push(toolNames),
     appendEntry: (customType: string, data: unknown) => entries.push([customType, data]),
+    sendMessage: (
+      message: { customType: string; content: string; display: boolean },
+      options: unknown,
+    ) => sentMessages.push({ message, options }),
   } as unknown as ExtensionAPI
   planModeExtension(pi)
   return {
     ...accessors(tools, commands, handlers),
     activeToolSets,
     entries,
+    sentMessages,
   }
 }
 
@@ -57,7 +69,7 @@ function accessors(
   tools: Map<string, RegisteredTool>,
   commands: Map<string, RegisteredCommand>,
   handlers: Map<string, (event: unknown, ctx: ExtensionContext) => unknown>,
-): Pick<ExtensionFixture, "tool" | "command" | "sessionStart" | "context"> {
+): Pick<ExtensionFixture, "tool" | "command" | "sessionStart" | "beforeAgentStart"> {
   return {
     tool: (name) => {
       const tool = tools.get(name)
@@ -74,12 +86,13 @@ function accessors(
       assert.ok(handler, "session_start registered")
       handler({ reason: "resume" }, sessionCtx)
     },
-    context: (messages) => {
-      const handler = handlers.get("context")
-      assert.ok(handler, "context registered")
-      return handler({ type: "context", messages }, {} as ExtensionContext) as
-        | { messages?: unknown[] }
-        | undefined
+    beforeAgentStart: async (entries: SessionEntry[] = []) => {
+      const handler = handlers.get("before_agent_start")
+      assert.ok(handler, "before_agent_start registered")
+      const sections: Record<string, string> = {}
+      const ctx = { sessionManager: { getEntries: () => entries } } as unknown as ExtensionContext
+      await handler({ systemPromptOptions: { sections } }, ctx)
+      return sections
     },
   }
 }
@@ -87,17 +100,6 @@ function accessors(
 // The constant loadout: pi's active set first, then the additions in canonical
 // order
 const CONSTANT_TOOL_SET = ["read", "bash", "grep", "find", "ls", "questionnaire", "plan_complete"]
-
-const tailText = (out: { messages?: unknown[] } | undefined): string => {
-  const tail = out?.messages?.at(-1) as
-    | { content?: Array<{ type: string; text?: string }> }
-    | undefined
-  const last = tail?.content?.at(-1)
-  assert.ok(last && last.type === "text" && typeof last.text === "string")
-  return last.text
-}
-
-const userTurn = (text: string): unknown => [{ role: "user", content: text, timestamp: 0 }]
 
 test("session_start restores into either mode silently", () => {
   const ext = extension()
@@ -155,27 +157,40 @@ test("plan_complete stages the trimmed plan", async () => {
   assert.deepEqual(ext.entries, [["plan-mode", { mode: "planning", plan: PLAN }]])
 })
 
-test("the planning reminder rides the request tail and persists nothing", () => {
+test("the planning prompt rides the system-prompt section and persists nothing", async () => {
   const ext = extension()
   ext.sessionStart(uiFake({ entries: stateEntry({ mode: "planning" }) }).ctx)
 
-  const out = ext.context(userTurn("explore the cache"))
+  const sections = await ext.beforeAgentStart(stateEntry({ mode: "planning" }))
 
-  assert.match(tailText(out), /\[PLAN MODE ACTIVE\]/u)
+  assert.match(sections["plan-mode"] ?? "", /\[PLAN MODE ACTIVE\]/u)
   assert.deepEqual(ext.entries, [])
 })
 
-test("default requests carry the switch note only after an exit", async () => {
+test("the default mode contributes no section", async () => {
   const ext = extension()
   ext.sessionStart(uiFake().ctx)
-  assert.equal(ext.context(userTurn("go")), undefined)
 
-  const session = uiFake({ entries: stateEntry({ mode: "planning", plan: PLAN }) })
-  ext.sessionStart(session.ctx)
+  assert.equal("plan-mode" in (await ext.beforeAgentStart()), false)
+})
+
+test("an exit sends the persisted switch note once", async () => {
+  const ext = extension()
+  ext.sessionStart(uiFake().ctx)
+  await ext.command("plan").handler("", uiFake().ctx) // default -> planning sends nothing
+  assert.equal(ext.sentMessages.length, 0)
+
   const menu = uiFake({ choice: "Exit plan mode (plan stays in context)" })
+  ext.sessionStart(uiFake({ entries: stateEntry({ mode: "planning", plan: PLAN }) }).ctx)
   await ext.command("plan").handler("", menu.ctx)
 
-  assert.match(tailText(ext.context(userTurn("go"))), /\[PLAN MODE ENDED\]/u)
+  assert.equal(ext.sentMessages.length, 1)
+  const { message, options } = ext.sentMessages[0]
+  assert.equal(message.customType, "plan-mode-ended")
+  assert.match(message.content, /\[PLAN MODE ENDED\]/u)
+  assert.equal(message.display, false)
+  assert.equal(options, undefined) // no turn: the note only rides the next prompt
+  assert.equal("plan-mode" in (await ext.beforeAgentStart(stateEntry({ mode: "default" }))), false)
 })
 
 test("/plan menu exit leaves planning and persists the default state", async () => {
@@ -202,7 +217,7 @@ test("/plan menu stay keeps planning and persists nothing", async () => {
   assert.deepEqual(menu.notifies, ["/plan will prompt the approval."])
 })
 
-test("plan-mode.json overrides ride the reminders and notify nothing", (t) => {
+test("plan-mode.json overrides ride the section and notify nothing", async (t) => {
   const dir = agentDirWith(t, JSON.stringify({ planModePrompt: "CUSTOM PLAN PROMPT" }))
   withAgentDirEnv(t, dir)
 
@@ -210,7 +225,7 @@ test("plan-mode.json overrides ride the reminders and notify nothing", (t) => {
   const session = uiFake({ entries: stateEntry({ mode: "planning" }) })
   ext.sessionStart(session.ctx)
 
-  assert.match(tailText(ext.context(userTurn("go"))), /CUSTOM PLAN PROMPT/u)
+  assert.match((await ext.beforeAgentStart())["plan-mode"] ?? "", /CUSTOM PLAN PROMPT/u)
   assert.deepEqual(session.notifies, [])
 })
 

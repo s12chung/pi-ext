@@ -6,6 +6,7 @@
  */
 
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import { PROMPTS } from "./config.ts"
 import { type ModeEntry } from "./session/entry.ts"
 import { startFreshImplementation } from "./session/fresh-implementation.ts"
 import { ensureBorderTint, setPlanBorderActive } from "./ui/border-tint.ts"
@@ -29,6 +30,8 @@ export abstract class Mode {
   public abstract toEntry(): ModeEntry
   /** The toast a mode transition shows on entering this mode */
   public abstract readonly enterNotice: string
+  /** This mode's system-prompt section content (session/prompt.ts); empty string leaves any section untouched */
+  public systemPrompt = (): string => ""
 
   public getPlan = (): string | undefined => undefined
 
@@ -59,6 +62,8 @@ export class PlanningMode extends Mode {
   public plan: string | undefined
 
   public readonly enterNotice = "Plan mode enabled."
+
+  public systemPrompt = (): string => PROMPTS.planModePrompt
 
   public enter(ctx: ExtensionContext): void {
     ensureBorderTint(ctx)
