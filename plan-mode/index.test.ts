@@ -1,118 +1,15 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
-  SessionEntry,
-} from "@earendil-works/pi-coding-agent"
-import planModeExtension from "./index.ts"
 import {
   PLAN,
   agentDirWith,
+  extension,
   planCompleteResult,
   stateEntry,
   uiFake,
   userEntry,
   withAgentDirEnv,
 } from "./utils/fixtures.ts"
-
-type RegisteredTool = {
-  name: string
-  execute: (toolCallId: string, params: { plan: string }) => Promise<unknown>
-}
-
-type RegisteredCommand = {
-  handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>
-}
-
-// Fakes for planModeExtension's registration surface; entries records what the
-// extension persists, sentMessages the custom messages it sends, and
-// activeToolSets the reconcile calls
-interface ExtensionFixture {
-  tool: (name: string) => RegisteredTool
-  command: (name: string) => RegisteredCommand
-  sessionStart: (ctx: ExtensionContext) => void
-  beforeAgentStart: (entries?: SessionEntry[]) => Promise<Record<string, string>>
-  agentSettled: (ctx: ExtensionContext) => Promise<void>
-  activeToolSets: string[][]
-  entries: Array<[string, unknown]>
-  sentMessages: Array<{
-    message: { customType: string; content: string; display: boolean }
-    options: unknown
-  }>
-}
-
-function extension(): ExtensionFixture {
-  const tools = new Map<string, RegisteredTool>()
-  const commands = new Map<string, RegisteredCommand>()
-  const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>()
-  const entries: Array<[string, unknown]> = []
-  const activeToolSets: string[][] = []
-  const sentMessages: ExtensionFixture["sentMessages"] = []
-  const pi = {
-    registerTool: (tool: RegisteredTool) => tools.set(tool.name, tool),
-    registerCommand: (name: string, command: RegisteredCommand) => commands.set(name, command),
-    on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) =>
-      handlers.set(event, handler),
-    getActiveTools: () => ["read", "bash"],
-    setActiveTools: (toolNames: string[]) => activeToolSets.push(toolNames),
-    appendEntry: (customType: string, data: unknown) => entries.push([customType, data]),
-    sendMessage: (
-      message: { customType: string; content: string; display: boolean },
-      options: unknown,
-    ) => sentMessages.push({ message, options }),
-  } as unknown as ExtensionAPI
-  planModeExtension(pi)
-  return {
-    ...accessors(tools, commands, handlers),
-    activeToolSets,
-    entries,
-    sentMessages,
-  }
-}
-
-// The typed views over the registration surface: each asserts its handler or
-// registration exists before handing it out
-function accessors(
-  tools: Map<string, RegisteredTool>,
-  commands: Map<string, RegisteredCommand>,
-  handlers: Map<string, (event: unknown, ctx: ExtensionContext) => unknown>,
-): Pick<
-  ExtensionFixture,
-  "tool" | "command" | "sessionStart" | "beforeAgentStart" | "agentSettled"
-> {
-  return {
-    tool: (name) => {
-      const tool = tools.get(name)
-      assert.ok(tool, `${name} registered`)
-      return tool
-    },
-    command: (name) => {
-      const command = commands.get(name)
-      assert.ok(command, `${name} registered`)
-      return command
-    },
-    sessionStart: (sessionCtx) => {
-      const handler = handlers.get("session_start")
-      assert.ok(handler, "session_start registered")
-      handler({ reason: "resume" }, sessionCtx)
-    },
-    beforeAgentStart: async (entries: SessionEntry[] = []) => {
-      const handler = handlers.get("before_agent_start")
-      assert.ok(handler, "before_agent_start registered")
-      const sections: Record<string, string> = {}
-      const ctx = { sessionManager: { getEntries: () => entries } } as unknown as ExtensionContext
-      await handler({ systemPromptOptions: { sections } }, ctx)
-      return sections
-    },
-    agentSettled: async (sessionCtx) => {
-      const handler = handlers.get("agent_settled")
-      assert.ok(handler, "agent_settled registered")
-      await handler({}, sessionCtx)
-    },
-  }
-}
 
 // The constant loadout: pi's active set first, then the additions in canonical
 // order
@@ -216,14 +113,26 @@ test("agent_settled menus only when the branch ends on the completion result", a
   assert.deepEqual(ext.entries, [["plan-mode", { mode: "default" }]])
 })
 
-test("an exit sends the persisted switch note once", async () => {
+test("toggles before any request stay silent - the notes key off the section", async () => {
   const ext = extension()
   ext.sessionStart(uiFake().ctx)
-  await ext.command("plan").handler("", uiFake().ctx) // default -> planning sends nothing
-  assert.equal(ext.sentMessages.length, 0)
+  await ext.command("plan").handler("", uiFake().ctx) // default -> planning
+  await ext.command("plan").handler("", uiFake().ctx) // planning -> default, same turn
+  assert.deepEqual(ext.sentMessages, [])
+
+  // A restore-exit owes nothing either: this session has installed nothing
+  ext.sessionStart(uiFake({ entries: stateEntry({ mode: "planning", plan: PLAN }) }).ctx)
+  const menu = uiFake({ choice: "Exit plan mode (plan stays in context)" })
+  await ext.command("plan").handler("", menu.ctx)
+  assert.deepEqual(ext.sentMessages, [])
+})
+
+test("an exit after a request sends the persisted switch note once", async () => {
+  const ext = extension()
+  ext.sessionStart(uiFake({ entries: stateEntry({ mode: "planning", plan: PLAN }) }).ctx)
+  await ext.beforeAgentStart(stateEntry({ mode: "planning" })) // the request installs the section
 
   const menu = uiFake({ choice: "Exit plan mode (plan stays in context)" })
-  ext.sessionStart(uiFake({ entries: stateEntry({ mode: "planning", plan: PLAN }) }).ctx)
   await ext.command("plan").handler("", menu.ctx)
 
   assert.equal(ext.sentMessages.length, 1)
@@ -233,6 +142,46 @@ test("an exit sends the persisted switch note once", async () => {
   assert.equal(message.display, false)
   assert.equal(options, undefined) // no turn: the note only rides the next prompt
   assert.equal("plan-mode" in (await ext.beforeAgentStart(stateEntry({ mode: "default" }))), false)
+})
+
+test("a re-entry after an exit answers with the re-entered note", async () => {
+  const ext = extension()
+  ext.sessionStart(uiFake({ entries: stateEntry({ mode: "planning", plan: PLAN }) }).ctx)
+  await ext.beforeAgentStart(stateEntry({ mode: "planning" })) // the request installs the section
+
+  const exit = uiFake({ choice: "Exit plan mode (plan stays in context)" })
+  await ext.command("plan").handler("", exit.ctx)
+  await ext.command("plan").handler("", uiFake().ctx) // fresh default: no plan, straight toggle
+
+  assert.deepEqual(
+    ext.sentMessages.map(({ message }) => message.customType),
+    ["plan-mode-ended", "plan-mode-reentered"],
+  )
+  assert.match(ext.sentMessages[1].message.content, /\[PLAN MODE RE-ENTERED\]/u)
+  assert.equal(ext.sentMessages[1].options, undefined)
+
+  // The section never left, so the re-entry request still sees the plan prompt
+  const sections = await ext.beforeAgentStart(stateEntry({ mode: "planning" }))
+  assert.match(sections["plan-mode"] ?? "", /\[PLAN MODE ACTIVE\]/u)
+})
+
+test("an enter and exit inside one turn sends nothing and installs nothing", async () => {
+  const ext = extension()
+  ext.sessionStart(uiFake().ctx)
+
+  await ext.command("plan").handler("", uiFake().ctx) // enter
+  await ext.command("plan").handler("", uiFake().ctx) // exit before any request
+
+  assert.deepEqual(ext.sentMessages, [])
+
+  // The next request lands in default mode owing no section write
+  assert.equal("plan-mode" in (await ext.beforeAgentStart(stateEntry({ mode: "default" }))), false)
+
+  // A later re-enter is a fresh install: the section announces itself
+  await ext.command("plan").handler("", uiFake().ctx)
+  assert.deepEqual(ext.sentMessages, [])
+  const sections = await ext.beforeAgentStart(stateEntry({ mode: "planning" }))
+  assert.match(sections["plan-mode"] ?? "", /\[PLAN MODE ACTIVE\]/u)
 })
 
 test("/plan menu exit leaves planning and persists the default state", async () => {

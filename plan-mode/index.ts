@@ -31,16 +31,20 @@ import {
 import { decodedMode, endedOnPlanCompletion } from "./session/decode.ts"
 import { appendEntry, restoreMode } from "./session/entry.ts"
 import { applyModelInfo } from "./session/fresh-implementation.ts"
-import { safeSetSection } from "./session/prompt.ts"
+import {
+  safeSetSection,
+  sectionInstalled,
+  sendEndedNote,
+  sendReenteredNote,
+} from "./session/prompt.ts"
 import { questionnaireTool } from "./tools/questionnaire.ts"
 import { debugLog } from "./utils/debug.ts"
 import { reconcileToolSet } from "./utils/tool-set.ts"
 
-// The mutable state the registration helpers share: the live mode, the
-// freshest command context, and the load-time config warning still owed its
-// one-time notify
 interface PlanModeExtensionState {
   mode: Mode
+  /** pi's per-request sections record, re-captured each before_agent_start; undefined until this session's first request */
+  sections: Record<string, string> | undefined
   latestCommandContext: ExtensionCommandContext | undefined
   configWarning: string | undefined
 }
@@ -56,15 +60,12 @@ function enterNextMode(
   ctx.ui.notify(state.mode.enterNotice)
   appendEntry(pi, state.mode.toEntry())
 
-  // The exit note rides one persisted message instead of request-local
-  // appends, for the same cache reason as the section (session/prompt.ts);
-  // opencode's BUILD_SWITCH is the per-request variant of this note
-  if (wasPlanning && !state.mode.isPlanning())
-    pi.sendMessage({
-      customType: "plan-mode-ended",
-      content: PROMPTS.planModeEndedPrompt,
-      display: false,
-    })
+  const installed = sectionInstalled(state.sections)
+  if (wasPlanning && installed) {
+    sendEndedNote(pi)
+  } else if (installed) {
+    sendReenteredNote(pi)
+  }
 }
 
 export default function planModeExtension(pi: ExtensionAPI): void {
@@ -75,6 +76,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
   const state: PlanModeExtensionState = {
     mode: new DefaultMode(),
+    sections: undefined,
     latestCommandContext: undefined,
     configWarning: warning,
   }
@@ -137,7 +139,8 @@ function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionSt
   pi.on(
     "before_agent_start",
     async (event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<void> => {
-      safeSetSection(state.mode.systemPrompt(), event.systemPromptOptions.sections)
+      state.sections = event.systemPromptOptions.sections
+      safeSetSection(state.mode.systemPrompt(), state.sections)
       // applyModelInfo here because this session's pi is not accessible in ctx.newSession
       await applyModelInfo(pi, ctx)
     },
@@ -168,8 +171,6 @@ function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState
     state.latestCommandContext = undefined
   })
 
-  // Runs on session replacement too (newSession/fork/switch): saved state is
-  // authoritative so the replaced session's mode/plan cannot leak.
   pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext): void => {
     debugLog("session_start", { reason: event.reason })
     state.latestCommandContext = undefined
@@ -181,6 +182,7 @@ function registerSessionHandlers(pi: ExtensionAPI, state: PlanModeExtensionState
     }
 
     state.mode = restoreMode(decodedMode(ctx.sessionManager.getEntries()))
+    state.sections = undefined
     state.mode.enter(ctx)
 
     // opencode hides the plan_exit tool per agent (permission-denied out

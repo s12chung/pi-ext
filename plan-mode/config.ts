@@ -15,6 +15,7 @@ import { safeErrorDetail } from "./utils/safe.ts"
 export interface PlanPrompts {
   planModePrompt: string
   planModeEndedPrompt: string
+  planModeReenteredPrompt: string
   planCompleteDescription: string
   planFormatDescription: string
   questionnaireDescription: string
@@ -81,6 +82,12 @@ to ask "Is this plan okay?" - that's what plan_complete does.`,
   planModeEndedPrompt: `[PLAN MODE ENDED]
 Plan mode is over - edit and write are available again. You may now make
 changes, including executing the plan produced earlier in this conversation.`,
+
+  planModeReenteredPrompt: `[PLAN MODE RE-ENTERED]
+Plan mode is active again - the [PLAN MODE ACTIVE] constraints reapply: no
+edits, no non-readonly tools, no changes to the system, except experiments
+inside a temporary folder. End your turn with a question or a plan_complete
+call.`,
 
   planCompleteDescription:
     "Always available, but call it ONLY while plan mode is active. Only in plan mode, call this tool: after you have written a complete plan, after you have clarified any questions with the user, when you are confident that the plan is ready for implementation. Do NOT call this tool: before you have finalized the plan, if you still have unanswered questions about the implementation, if the user has indicated that they want to continue planning.",

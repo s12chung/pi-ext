@@ -26,6 +26,7 @@ All the prompts, including the tool descriptions, can be overwritten from `<agen
 
 - `planModePrompt` - the system-prompt section installed when planning begins (it stays for the session)
 - `planModeEndedPrompt` - the one-time message sent when leaving plan mode
+- `planModeReenteredPrompt` - the one-time message sent when plan mode is entered again after an exit
 - `planCompleteDescription` - the `plan_complete` tool description
 - `planFormatDescription` - what the `plan_complete` plan parameter should contain
 - `questionnaireDescription` - the `questionnaire` tool description

@@ -3,12 +3,19 @@
 // canonical two-phase plan the tests decode and swap, and temp agent dirs for
 // config loading
 
+import assert from "node:assert/strict"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { TestContext } from "node:test"
 import type { JsonValue } from "@earendil-works/pi-ai"
-import type { ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent"
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+  SessionEntry,
+} from "@earendil-works/pi-coding-agent"
+import planModeExtension from "../index.ts"
 
 export const PLAN = "## 1. Core\nSwap the field.\n\n## 2. Verification\nmake test."
 
@@ -105,4 +112,101 @@ export function uiFake({
     },
   } as unknown as ExtensionCommandContext
   return { ctx, notifies, editorTexts, editors }
+}
+
+type RegisteredTool = {
+  name: string
+  execute: (toolCallId: string, params: { plan: string }) => Promise<unknown>
+}
+
+type RegisteredCommand = {
+  handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>
+}
+
+type SentNote = {
+  message: { customType: string; content: string; display: boolean }
+  options: unknown
+}
+
+// Fakes for planModeExtension's registration surface; entries records what the
+// extension persists, sentMessages the custom messages it sends, and
+// activeToolSets the reconcile calls
+export interface ExtensionFixture {
+  tool: (name: string) => RegisteredTool
+  command: (name: string) => RegisteredCommand
+  sessionStart: (ctx: ExtensionContext) => void
+  beforeAgentStart: (entries?: SessionEntry[]) => Promise<Record<string, string>>
+  agentSettled: (ctx: ExtensionContext) => Promise<void>
+  activeToolSets: string[][]
+  entries: Array<[string, unknown]>
+  sentMessages: SentNote[]
+}
+
+export function extension(): ExtensionFixture {
+  const tools = new Map<string, RegisteredTool>()
+  const commands = new Map<string, RegisteredCommand>()
+  const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>()
+  const entries: Array<[string, unknown]> = []
+  const activeToolSets: string[][] = []
+  const sentMessages: SentNote[] = []
+  const pi = {
+    registerTool: (tool: RegisteredTool) => tools.set(tool.name, tool),
+    registerCommand: (name: string, command: RegisteredCommand) => commands.set(name, command),
+    on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) =>
+      handlers.set(event, handler),
+    getActiveTools: () => ["read", "bash"],
+    setActiveTools: (toolNames: string[]) => activeToolSets.push(toolNames),
+    appendEntry: (customType: string, data: unknown) => entries.push([customType, data]),
+    sendMessage: (message: SentNote["message"], options: unknown) =>
+      sentMessages.push({ message, options }),
+  } as unknown as ExtensionAPI
+  planModeExtension(pi)
+  return {
+    ...accessors(tools, commands, handlers),
+    activeToolSets,
+    entries,
+    sentMessages,
+  }
+}
+
+// The typed views over the registration surface: each asserts its handler or
+// registration exists before handing it out
+function accessors(
+  tools: Map<string, RegisteredTool>,
+  commands: Map<string, RegisteredCommand>,
+  handlers: Map<string, (event: unknown, ctx: ExtensionContext) => unknown>,
+): Pick<
+  ExtensionFixture,
+  "tool" | "command" | "sessionStart" | "beforeAgentStart" | "agentSettled"
+> {
+  return {
+    tool: (name) => {
+      const tool = tools.get(name)
+      assert.ok(tool, `${name} registered`)
+      return tool
+    },
+    command: (name) => {
+      const command = commands.get(name)
+      assert.ok(command, `${name} registered`)
+      return command
+    },
+    sessionStart: (sessionCtx) => {
+      const handler = handlers.get("session_start")
+      assert.ok(handler, "session_start registered")
+      handler({ reason: "resume" }, sessionCtx)
+    },
+    beforeAgentStart: async (entries: SessionEntry[] = []) => {
+      const handler = handlers.get("before_agent_start")
+      assert.ok(handler, "before_agent_start registered")
+      const sections: Record<string, string> = {}
+      const ctx = { sessionManager: { getEntries: () => entries } } as unknown as ExtensionContext
+      await handler({ systemPromptOptions: { sections } }, ctx)
+      return sections
+    },
+    agentSettled: async (sessionCtx) => {
+      const handler = handlers.get("agent_settled")
+      assert.ok(handler, "agent_settled registered")
+      await handler({}, sessionCtx)
+    },
+  }
 }
