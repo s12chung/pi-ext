@@ -56,7 +56,7 @@ Plan format - free-flow markdown:
 
 Plan content:
 - Include only your recommended approach, no alternatives
-- All content must specify either:
+- All content must fit these shapes, but FREEFORM this content:
   1. **Sketch** -- high level intent sketch
   2. **Spec** -- a change to or definition of
      classes/interfaces/libraries (rarely a function, never a file)
@@ -66,8 +66,8 @@ Plan content:
      attempting to implement the plan, usually external to the codebase
 - The best specifics are pointers to code or documentation with
   less than 10 words
-- Displaying user-facing interfaces, declarative code,
-  format/boundary definitions, or summary pseudocode is ENCOURAGED
+- Write CONCRETE EXAMPLES -- user-facing interfaces, declarative
+  code, lifecycle examples listing steps, or summary pseudocode
 
 MOST OF THE CONTENT must be HIGH LEVEL intent-focused changes,
 NEVER BY FILE/FUNCTION.

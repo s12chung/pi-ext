@@ -42,7 +42,14 @@ export function safeSetSection(prompt: string, sections: Record<string, string>)
   // An exit deliberately leaves the section in place: deleting it diffs into
   // an appended mid-conversation "Removed system prompt section" system
   // message (pi-ai utils/text.js renderSystemMessageUpdate), which broke the
-  // provider cache when switching back to normal mode
+  // provider cache when switching back to normal mode: only models with
+  // supportsMidConvoSystemMessages in pi-ai's generated catalog get such
+  // patches sent in place and keep the cached prefix; all other models fold
+  // them into the leading prompt instead (pi-ai utils/transcript.js
+  // collapseSystemMessages). Catalog: pi-ai providers/data/*.json -
+  // Anthropic claude-opus-4-8+/-5.x, claude-sonnet-5-5, claude-fable-5+;
+  // OpenAI gpt-5.4+ (also Codex/OpenRouter/Copilot variants); Moonshot
+  // kimi-k2.6+/kimi-k3; DeepSeek deepseek-v4-pro
   if (prompt === "") return
   if (sections[PLAN_MODE_SECTION] !== prompt) sections[PLAN_MODE_SECTION] = prompt
 }
