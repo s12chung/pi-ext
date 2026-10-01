@@ -28,7 +28,7 @@ import {
   promptPlanApproval,
   startFreshHandoff,
 } from "./mode.ts"
-import { decodedMode } from "./session/decode.ts"
+import { decodedMode, endedOnPlanCompletion } from "./session/decode.ts"
 import { appendEntry, restoreMode } from "./session/entry.ts"
 import { applyModelInfo } from "./session/fresh-implementation.ts"
 import { safeSetSection } from "./session/prompt.ts"
@@ -150,6 +150,7 @@ function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionSt
       const plan = state.mode.getPlan()
       if (!ctx.hasUI || !plan) return
       if (!ctx.isIdle() || ctx.hasPendingMessages()) return
+      if (!endedOnPlanCompletion(ctx.sessionManager.getBranch())) return
 
       debugLog("agent_settled menu", { idle: true, pending: ctx.hasPendingMessages() })
       const exit = await promptPlanApproval(ctx, state.latestCommandContext, plan)

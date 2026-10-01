@@ -1,8 +1,15 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { AgentToolResult } from "@earendil-works/pi-coding-agent"
-import { PLAN, entryBase, stateEntry, userEntry } from "../utils/fixtures.ts"
-import { decodedMode, toolResultText } from "./decode.ts"
+import type { AgentToolResult, SessionEntry } from "@earendil-works/pi-coding-agent"
+import {
+  PLAN,
+  entryBase,
+  planCompleteResult,
+  stateEntry,
+  toolResultEntry,
+  userEntry,
+} from "../utils/fixtures.ts"
+import { decodedMode, endedOnPlanCompletion, toolResultText } from "./decode.ts"
 
 test("decodedState returns no state without a plan-mode entry", () => {
   assert.equal(decodedMode([]), undefined)
@@ -124,6 +131,41 @@ test("toolResultText joins text blocks, trims, and skips other block types", () 
     ],
   } as unknown as AgentToolResult<never>
   assert.equal(toolResultText(result), "**Proposed Plan**\n\n\nbody")
+})
+
+// A bookkeeping entry pi may append after a turn's messages: never speaks for
+// the run, so the gate skips past it to the newest message
+const usageEntry: SessionEntry = {
+  type: "usage",
+  kind: "agent",
+  provider: "anthropic",
+  model: "claude",
+  usage: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  },
+  ...entryBase,
+}
+
+test("endedOnPlanCompletion is true only while the completion result is the newest message", () => {
+  assert.equal(endedOnPlanCompletion([planCompleteResult({ source: "plan_complete" })]), true)
+  assert.equal(endedOnPlanCompletion([planCompleteResult({}), usageEntry]), true)
+  assert.equal(
+    endedOnPlanCompletion(stateEntry({ mode: "planning" }, planCompleteResult({}))),
+    true,
+  )
+})
+
+test("endedOnPlanCompletion is false once any turn lands past the completion", () => {
+  assert.equal(endedOnPlanCompletion([planCompleteResult({}), userEntry]), false)
+  assert.equal(endedOnPlanCompletion([userEntry]), false)
+  assert.equal(endedOnPlanCompletion([toolResultEntry("read")]), false)
+  assert.equal(endedOnPlanCompletion([usageEntry]), false)
+  assert.equal(endedOnPlanCompletion([]), false)
 })
 
 test("toolResultText returns empty without text content", () => {

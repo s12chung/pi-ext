@@ -20,19 +20,22 @@ export const stateEntry = (data: unknown, ...after: SessionEntry[]): SessionEntr
   ...after,
 ]
 
-export const planCompleteResult = (details: JsonValue): SessionEntry => ({
+export const toolResultEntry = (toolName: string, details: JsonValue = {}): SessionEntry => ({
   type: "message",
   ...entryBase,
   message: {
     role: "toolResult",
     toolCallId: "tc0",
-    toolName: "plan_complete",
+    toolName,
     content: [],
     isError: false,
     timestamp: 0,
     details,
   },
 })
+
+export const planCompleteResult = (details: JsonValue): SessionEntry =>
+  toolResultEntry("plan_complete", details)
 
 export const userEntry: SessionEntry = {
   type: "message",
@@ -63,7 +66,8 @@ export function withAgentDirEnv(t: TestContext, value: string | undefined): void
 
 // A dialog-capable fake ctx: select resolves to choice (Esc when absent),
 // notify/setEditorText/editor record the UI side effects tests assert on, and
-// entries feed sessionManager.getEntries for the restore path
+// entries feed sessionManager.getEntries (restore) and getBranch (the settle
+// gate) the same active path
 interface UiFake {
   ctx: ExtensionCommandContext
   notifies: string[]
@@ -80,7 +84,12 @@ export function uiFake({
   const editors: string[] = []
   const ctx = {
     hasUI: true,
-    sessionManager: { getEntries: (): SessionEntry[] => entries },
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+    sessionManager: {
+      getEntries: (): SessionEntry[] => entries,
+      getBranch: (): SessionEntry[] => entries,
+    },
     ui: {
       select: (): Promise<string | undefined> => Promise.resolve(choice),
       editor: (title: string) => {

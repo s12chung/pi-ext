@@ -56,9 +56,9 @@ export class DefaultMode extends Mode {
 }
 
 export class PlanningMode extends Mode {
-  // The phase is the staged plan itself: undefined explores, a string owes its
-  // approval menu - plan_complete stages it (a resubmit overwrites) and only
-  // the exit's mode swap drops it
+  // The phase is the staged plan itself: undefined explores, a string holds
+  // the completed plan for /plan and the fresh handoff - plan_complete stages
+  // it (a resubmit overwrites) and only the exit's mode swap drops it
   public plan: string | undefined
 
   public readonly enterNotice = "Plan mode enabled."

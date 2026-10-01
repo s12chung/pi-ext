@@ -5,6 +5,7 @@
  */
 
 import type { AgentToolResult, SessionEntry } from "@earendil-works/pi-coding-agent"
+import { PLAN_COMPLETE_TOOL_NAME } from "../tools/names.ts"
 import { type ModeEntry, type ModelInfo, getEntry } from "./entry.ts"
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const
@@ -46,6 +47,21 @@ export function toolResultText<T>(result: AgentToolResult<T>): string {
     .flatMap((block) => (block.type === "text" ? [block.text] : []))
     .join("\n")
     .trim()
+}
+
+// The agent_settled gate: plan_complete returns terminate: true, so when the
+// run settles right after the call, that result is the branch's newest
+// message - any later turn (a question, more exploring) appends messages past
+// it. Non-message entries (usage, custom, labels) are bookkeeping that never
+// speaks for the run.
+export function endedOnPlanCompletion(entries: SessionEntry[]): boolean {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (entry.type !== "message") continue
+    const { message } = entry
+    return message.role === "toolResult" && message.toolName === PLAN_COMPLETE_TOOL_NAME
+  }
+  return false
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

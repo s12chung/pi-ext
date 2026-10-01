@@ -49,7 +49,6 @@ export function getEntry(entries: SessionEntry[]): SessionEntry | undefined {
 export function restoreMode(state: ModeEntry | undefined): Mode {
   if (state?.mode !== "planning") return new DefaultMode()
   const planning = new PlanningMode()
-  // The menu is owed again after restore: it re-opens on the next settle
   planning.plan = state.plan
   return planning
 }

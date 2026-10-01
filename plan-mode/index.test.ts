@@ -7,7 +7,15 @@ import type {
   SessionEntry,
 } from "@earendil-works/pi-coding-agent"
 import planModeExtension from "./index.ts"
-import { PLAN, agentDirWith, stateEntry, uiFake, withAgentDirEnv } from "./utils/fixtures.ts"
+import {
+  PLAN,
+  agentDirWith,
+  planCompleteResult,
+  stateEntry,
+  uiFake,
+  userEntry,
+  withAgentDirEnv,
+} from "./utils/fixtures.ts"
 
 type RegisteredTool = {
   name: string
@@ -26,6 +34,7 @@ interface ExtensionFixture {
   command: (name: string) => RegisteredCommand
   sessionStart: (ctx: ExtensionContext) => void
   beforeAgentStart: (entries?: SessionEntry[]) => Promise<Record<string, string>>
+  agentSettled: (ctx: ExtensionContext) => Promise<void>
   activeToolSets: string[][]
   entries: Array<[string, unknown]>
   sentMessages: Array<{
@@ -69,7 +78,10 @@ function accessors(
   tools: Map<string, RegisteredTool>,
   commands: Map<string, RegisteredCommand>,
   handlers: Map<string, (event: unknown, ctx: ExtensionContext) => unknown>,
-): Pick<ExtensionFixture, "tool" | "command" | "sessionStart" | "beforeAgentStart"> {
+): Pick<
+  ExtensionFixture,
+  "tool" | "command" | "sessionStart" | "beforeAgentStart" | "agentSettled"
+> {
   return {
     tool: (name) => {
       const tool = tools.get(name)
@@ -93,6 +105,11 @@ function accessors(
       const ctx = { sessionManager: { getEntries: () => entries } } as unknown as ExtensionContext
       await handler({ systemPromptOptions: { sections } }, ctx)
       return sections
+    },
+    agentSettled: async (sessionCtx) => {
+      const handler = handlers.get("agent_settled")
+      assert.ok(handler, "agent_settled registered")
+      await handler({}, sessionCtx)
     },
   }
 }
@@ -172,6 +189,31 @@ test("the default mode contributes no section", async () => {
   ext.sessionStart(uiFake().ctx)
 
   assert.equal("plan-mode" in (await ext.beforeAgentStart()), false)
+})
+
+test("agent_settled menus only when the branch ends on the completion result", async () => {
+  const ext = extension()
+
+  // The staged plan alone owes nothing: a follow-up user turn landed past the
+  // completion result, so the settle stays silent
+  const followUp = uiFake({
+    choice: "Exit plan mode (plan stays in context)",
+    entries: stateEntry({ mode: "planning", plan: PLAN }, planCompleteResult({}), userEntry),
+  })
+  ext.sessionStart(followUp.ctx)
+  await ext.agentSettled(followUp.ctx)
+  assert.deepEqual(followUp.notifies, [])
+  assert.deepEqual(ext.entries, [])
+
+  const menu = uiFake({
+    choice: "Exit plan mode (plan stays in context)",
+    entries: stateEntry({ mode: "planning", plan: PLAN }, planCompleteResult({})),
+  })
+  ext.sessionStart(menu.ctx)
+  await ext.agentSettled(menu.ctx)
+
+  assert.deepEqual(menu.notifies, ["Plan mode disabled."])
+  assert.deepEqual(ext.entries, [["plan-mode", { mode: "default" }]])
 })
 
 test("an exit sends the persisted switch note once", async () => {
