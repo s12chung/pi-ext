@@ -3,10 +3,9 @@
  *
  * Read-only exploration mode, toggled by /plan: the agent explores and
  * produces a decision-ready plan before any file changes. Enforcement is
- * the mode reminder (no tool locks), which also keeps toggles cache-stable:
- * it rides a system-prompt section installed once when planning begins
- * and never removed (session/prompt.ts), and the tool set never changes,
- * so toggling never breaks the cached request prefix. On approval, the plan hands off
+ * the mode reminder (no tool locks): a system-prompt section carries it,
+ * added on entry and removed on exit (session/prompt.ts), and the tool set
+ * never changes, so toggling only ever appends small section patches. On approval, the plan hands off
  * to a fresh session, leaving the planning transcript behind. This module
  * is the wiring: commands, events, and session lifecycle.
  */
@@ -31,12 +30,7 @@ import {
 import { decodedMode, endedOnPlanCompletion } from "./session/decode.ts"
 import { appendEntry, restoreMode } from "./session/entry.ts"
 import { applyModelInfo } from "./session/fresh-implementation.ts"
-import {
-  safeSetSection,
-  sectionInstalled,
-  sendEndedNote,
-  sendReenteredNote,
-} from "./session/prompt.ts"
+import { sectionInstalled, sendEndedNote, setSection } from "./session/prompt.ts"
 import { questionnaireTool } from "./tools/questionnaire.ts"
 import { debugLog } from "./utils/debug.ts"
 import { reconcileToolSet } from "./utils/tool-set.ts"
@@ -60,12 +54,7 @@ function enterNextMode(
   ctx.ui.notify(state.mode.enterNotice)
   appendEntry(pi, state.mode.toEntry())
 
-  const installed = sectionInstalled(state.sections)
-  if (wasPlanning && installed) {
-    sendEndedNote(pi)
-  } else if (installed) {
-    sendReenteredNote(pi)
-  }
+  if (wasPlanning && sectionInstalled(state.sections)) sendEndedNote(pi)
 }
 
 export default function planModeExtension(pi: ExtensionAPI): void {
@@ -140,7 +129,7 @@ function registerAgentEventHandlers(pi: ExtensionAPI, state: PlanModeExtensionSt
     "before_agent_start",
     async (event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<void> => {
       state.sections = event.systemPromptOptions.sections
-      safeSetSection(state.mode.systemPrompt(), state.sections)
+      setSection(state.mode.systemPrompt(), state.sections)
       // applyModelInfo here because this session's pi is not accessible in ctx.newSession
       await applyModelInfo(pi, ctx)
     },

@@ -3,34 +3,15 @@
  * before_agent_start handler mutates systemPromptOptions.sections, and pi
  * appends one small persisted system message per section change
  * ("Updated/Removed system prompt section 'plan-mode'", agent-session.js
- * _preparePromptAndToolLoadout, diffing the transcript-folded sections of
- * getCurrentSystemMessage) instead of rewriting the head prompt. Later
- * requests replay those messages byte-identically, so the provider cache
- * breakpoint only ever sees appends, never changed bytes.
- *
- * Reminder placements, newest first:
- * - opencode's experimental plan mode persists its reminder into the last
- *   user message every turn (sessions.updatePart): cache-stable, but the
- *   transcript grows one reminder per turn
- * - opencode's legacy path - and this repo, d4f44cd..ca4e334 - appended it
- *   request-locally to the tail: providers place the cache breakpoint on
- *   the last message (pi-ai: its very last block, anthropic-messages.js /
- *   openai-completions.js; opencode: its last two non-system messages,
- *   provider/transform.ts), so request N writes the transient reminder into
- *   the cache while request N+1 re-sends that message without it - the
- *   histories diverge at the old tail and the message history never hits
- *   cache, re-billed at full input price every request
- * - this section: the entry-only variant - one appended message when
- *   planning begins, no per-turn growth, and toggles whose section patches
- *   (remove on the first default request after an exit, add on a re-entry's
- *   first request) are one-time appends; between an exit and that request
- *   the read-only rules linger, lifted early by the one-time toggle notes
- *   (sendEndedNote/sendReenteredNote below) on exit and on the re-entry an
- *   exit leaves un-announced (sectionInstalled gates which re-entries owe
- *   one)
+ * _preparePromptAndToolLoadout) instead of rewriting the head prompt. Entry
+ * installs the section, and a re-entry's re-install patch re-sends the whole
+ * prompt, so it announces itself; only the exit carries a note
+ * (sendEndedNote below, opencode's BUILD_SWITCH equivalent): the bare removal
+ * patch never says the model may go implement. opencode's experimental plan
+ * mode instead persists its reminder into the last user message every turn -
+ * cache-stable too, but the transcript grows a reminder per turn.
  *
  * https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/reminders.ts
- * https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/provider/transform.ts
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
@@ -38,19 +19,19 @@ import { PROMPTS } from "../config.ts"
 
 const PLAN_MODE_SECTION = "plan-mode"
 
-export function safeSetSection(prompt: string, sections: Record<string, string>): void {
-  // An exit deliberately leaves the section in place: deleting it diffs into
-  // an appended mid-conversation "Removed system prompt section" system
-  // message (pi-ai utils/text.js renderSystemMessageUpdate), which broke the
-  // provider cache when switching back to normal mode: only models with
-  // supportsMidConvoSystemMessages in pi-ai's generated catalog get such
-  // patches sent in place and keep the cached prefix; all other models fold
-  // them into the leading prompt instead (pi-ai utils/transcript.js
-  // collapseSystemMessages). Catalog: pi-ai providers/data/*.json -
-  // Anthropic claude-opus-4-8+/-5.x, claude-sonnet-5-5, claude-fable-5+;
-  // OpenAI gpt-5.4+ (also Codex/OpenRouter/Copilot variants); Moonshot
-  // kimi-k2.6+/kimi-k3; DeepSeek deepseek-v4-pro
-  if (prompt === "") return
+export function setSection(prompt: string, sections: Record<string, string>): void {
+  // Section patches are mid-conversation system messages: models with
+  // supportsMidConvoSystemMessages in pi-ai's per-model catalog - the current
+  // generation of four families (claude 4.8+/5.x, gpt-5.4+, kimi-k2.6+/k3,
+  // deepseek-v4-pro) - get them appended in place, cache-stable; the rest
+  // (e.g. zai's glm) fold them into the leading prompt and re-bill the whole
+  // prefix once per toggle. Mid-conversation tool changes are rarer -
+  // supportsMidConvoToolChanges/Additions, literally currently only claude
+  // and kimi-k3 - so the loadout stays constant (utils/tool-set.ts).
+  if (prompt === "") {
+    delete sections[PLAN_MODE_SECTION]
+    return
+  }
   if (sections[PLAN_MODE_SECTION] !== prompt) sections[PLAN_MODE_SECTION] = prompt
 }
 
@@ -62,14 +43,6 @@ export function sendEndedNote(pi: ExtensionAPI): void {
   pi.sendMessage({
     customType: "plan-mode-ended",
     content: PROMPTS.planModeEndedPrompt,
-    display: false,
-  })
-}
-
-export function sendReenteredNote(pi: ExtensionAPI): void {
-  pi.sendMessage({
-    customType: "plan-mode-reentered",
-    content: PROMPTS.planModeReenteredPrompt,
     display: false,
   })
 }

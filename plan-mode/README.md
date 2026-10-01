@@ -2,7 +2,7 @@
 
 Read-only exploration mode for [pi](https://github.com/earendil-works/pi): the agent explores code and produces a decision-ready plan before any file changes. Toggle it with `/plan`.
 
-- **Soft enforcement, cache-stable** — the mode prompt directs the agent to leave the workspace unchanged (experiments inside a temporary folder are allowed); there are no tool locks. The prompt is written once as part of the system-prompt and the tool array never changes, so the cached request prefix survives toggles intact.
+- **Soft enforcement, cache-stable** — the mode `system prompt` directs the agent to leave the workspace unchanged (experiments inside a temporary folder are allowed); there are no tool changes or locks. The `system prompt` is removed when exiting plan mode and does not break the cache for [most models](https://github.com/earendil-works/pi/blob/a13d35a742c6ef8462812a28fbe1d8c8b7431c32/packages/ai/src/types.ts#L846).
 - **Handoff to a fresh session, no lingering artifacts** — on approval, execution starts in a fresh session whose kickoff prompt embeds the plan; the planning transcript and plan-mode state stay behind in the parent session.
 
 ## Install
@@ -24,9 +24,8 @@ ln -s "$(pwd)" ~/.pi/extensions/plan-mode
 
 All the prompts, including the tool descriptions, can be overwritten from `<agent-dir>/plan-mode.json` (agent dir: `PI_CODING_AGENT_DIR` or `~/.pi/agent`):
 
-- `planModePrompt` - the system-prompt section installed when planning begins (it stays for the session)
+- `planModePrompt` - the system-prompt section installed while planning (removed on exit)
 - `planModeEndedPrompt` - the one-time message sent when leaving plan mode
-- `planModeReenteredPrompt` - the one-time message sent when plan mode is entered again after an exit
 - `planCompleteDescription` - the `plan_complete` tool description
 - `planFormatDescription` - what the `plan_complete` plan parameter should contain
 - `questionnaireDescription` - the `questionnaire` tool description

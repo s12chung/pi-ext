@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { DefaultMode, PlanningMode } from "../mode.ts"
-import { safeSetSection, sectionInstalled, sendEndedNote, sendReenteredNote } from "./prompt.ts"
+import { sectionInstalled, sendEndedNote, setSection } from "./prompt.ts"
 
 test("sectionInstalled reads the record live", () => {
   assert.equal(sectionInstalled(undefined), false)
@@ -10,7 +10,7 @@ test("sectionInstalled reads the record live", () => {
   assert.equal(sectionInstalled({ "plan-mode": "prompt" }), true)
 })
 
-test("the note senders append their prompts as hidden custom messages", () => {
+test("the ended note appends its prompt as a hidden custom message", () => {
   const sent: Array<{
     message: { customType: string; content: string; display: boolean }
     options: unknown
@@ -23,34 +23,29 @@ test("the note senders append their prompts as hidden custom messages", () => {
   } as unknown as ExtensionAPI
 
   sendEndedNote(pi)
-  sendReenteredNote(pi)
 
-  assert.equal(sent.length, 2)
+  assert.equal(sent.length, 1)
   assert.equal(sent[0]?.message.customType, "plan-mode-ended")
   assert.match(sent[0]?.message.content ?? "", /\[PLAN MODE ENDED\]/u)
-  assert.equal(sent[1]?.message.customType, "plan-mode-reentered")
-  assert.match(sent[1]?.message.content ?? "", /\[PLAN MODE RE-ENTERED\]/u)
-  for (const { message, options } of sent) {
-    assert.equal(message.display, false)
-    assert.equal(options, undefined) // no turn: the note only rides the next prompt
-  }
+  assert.equal(sent[0]?.message.display, false)
+  assert.equal(sent[0]?.options, undefined) // no turn: the note waits for the next prompt
 })
 
 test("planning mode installs its prompt under the plan-mode section", () => {
   const sections: Record<string, string> = {}
-  safeSetSection(new PlanningMode().systemPrompt(), sections)
+  setSection(new PlanningMode().systemPrompt(), sections)
   assert.match(sections["plan-mode"] ?? "", /\[PLAN MODE ACTIVE\]/u)
 })
 
-test("an empty prompt never removes the section and is a no-op when absent", () => {
+test("an empty prompt removes an installed section and is a no-op when absent", () => {
   const sections: Record<string, string> = {}
-  safeSetSection(new DefaultMode().systemPrompt(), sections)
+  setSection(new DefaultMode().systemPrompt(), sections)
   assert.equal("plan-mode" in sections, false)
 
-  // The exit keeps the section: removing it broke the cache (prompt.ts)
+  // The exit's request diffs into a persisted "Removed system prompt section"
   sections["plan-mode"] = "stale"
-  safeSetSection("", sections)
-  assert.equal(sections["plan-mode"], "stale")
+  setSection("", sections)
+  assert.equal("plan-mode" in sections, false)
 })
 
 test("an unchanged prompt skips the write", () => {
@@ -65,6 +60,6 @@ test("an unchanged prompt skips the write", () => {
     },
   })
 
-  safeSetSection(prompt, sections)
+  setSection(prompt, sections)
   assert.equal(writes, 0)
 })

@@ -71,7 +71,7 @@ test("plan_complete stages the trimmed plan", async () => {
   assert.deepEqual(ext.entries, [["plan-mode", { mode: "planning", plan: PLAN }]])
 })
 
-test("the planning prompt rides the system-prompt section and persists nothing", async () => {
+test("the planning prompt installs as the system-prompt section and persists nothing", async () => {
   const ext = extension()
   ext.sessionStart(uiFake({ entries: stateEntry({ mode: "planning" }) }).ctx)
 
@@ -140,27 +140,28 @@ test("an exit after a request sends the persisted switch note once", async () =>
   assert.equal(message.customType, "plan-mode-ended")
   assert.match(message.content, /\[PLAN MODE ENDED\]/u)
   assert.equal(message.display, false)
-  assert.equal(options, undefined) // no turn: the note only rides the next prompt
+  assert.equal(options, undefined) // no turn: the note waits for the next prompt
   assert.equal("plan-mode" in (await ext.beforeAgentStart(stateEntry({ mode: "default" }))), false)
 })
 
-test("a re-entry after an exit answers with the re-entered note", async () => {
+test("a re-entry after an exit sends no note - the re-installed section announces itself", async () => {
   const ext = extension()
   ext.sessionStart(uiFake({ entries: stateEntry({ mode: "planning", plan: PLAN }) }).ctx)
   await ext.beforeAgentStart(stateEntry({ mode: "planning" })) // the request installs the section
 
   const exit = uiFake({ choice: "Exit plan mode (plan stays in context)" })
   await ext.command("plan").handler("", exit.ctx)
+  // the first default-mode request diffs into the section's removal
+  assert.equal("plan-mode" in (await ext.beforeAgentStart(stateEntry({ mode: "default" }))), false)
+
   await ext.command("plan").handler("", uiFake().ctx) // fresh default: no plan, straight toggle
 
   assert.deepEqual(
     ext.sentMessages.map(({ message }) => message.customType),
-    ["plan-mode-ended", "plan-mode-reentered"],
+    ["plan-mode-ended"],
   )
-  assert.match(ext.sentMessages[1].message.content, /\[PLAN MODE RE-ENTERED\]/u)
-  assert.equal(ext.sentMessages[1].options, undefined)
 
-  // The section never left, so the re-entry request still sees the plan prompt
+  // the re-entry's request re-installs the section: the patch re-announces it
   const sections = await ext.beforeAgentStart(stateEntry({ mode: "planning" }))
   assert.match(sections["plan-mode"] ?? "", /\[PLAN MODE ACTIVE\]/u)
 })
@@ -208,7 +209,7 @@ test("/plan menu stay keeps planning and persists nothing", async () => {
   assert.deepEqual(menu.notifies, ["/plan will prompt the approval."])
 })
 
-test("plan-mode.json overrides ride the section and notify nothing", async (t) => {
+test("plan-mode.json overrides land in the section and notify nothing", async (t) => {
   const dir = agentDirWith(t, JSON.stringify({ planModePrompt: "CUSTOM PLAN PROMPT" }))
   withAgentDirEnv(t, dir)
 

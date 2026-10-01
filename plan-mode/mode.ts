@@ -1,8 +1,8 @@
 /**
  * The modes as objects: index.ts stores the current one and swaps it on
  * toggle; each mode owns its UI and event behavior. Modes carry no tools -
- * utils/tool-set.ts keeps the loadout constant and index.ts gates calls, so a
- * toggle never rewrites the request's cached prefix.
+ * utils/tool-set.ts keeps the loadout constant and index.ts gates calls, so
+ * a toggle never reshapes the tool declarations.
  */
 
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent"
@@ -30,7 +30,7 @@ export abstract class Mode {
   public abstract toEntry(): ModeEntry
   /** The toast a mode transition shows on entering this mode */
   public abstract readonly enterNotice: string
-  /** This mode's system-prompt section content (session/prompt.ts); empty string leaves any section untouched */
+  /** This mode's system-prompt section content (session/prompt.ts); the empty string removes the section */
   public systemPrompt = (): string => ""
 
   public getPlan = (): string | undefined => undefined
